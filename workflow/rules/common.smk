@@ -37,7 +37,7 @@ budget_cores = workflow.global_resources.get("_cores")
 budget_cores = getattr(budget_cores, "value", budget_cores)
 
 if budget_mem is None:
-    raise PreflightError("No memory budget set. Launch with: bash workflow/chip.sh run ... "
+    raise PreflightError("No memory budget set. Launch with: bash workflow/hemaclone.sh run ... "
                          "(or, without Docker, python workflow/scripts/run_batches.py ...).")
 
 oversized = [f"{rule}: {size['mem_mb']} MB" for rule, size in config["job_sizes"].items()

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Run the CHIP workflow in batches of N samples, with every setting available
+Run the HemaClone in batches of N samples, with every setting available
 as a launch flag.
 
 Each batch runs to completion (alignment through MAFs and per-sample QC)
@@ -15,11 +15,11 @@ Settings, from lowest to highest precedence:
   default config.yaml  <  --settings FILE  <  --set KEY=VALUE  <  dedicated flags
 
 The code and default config are read from the workflow home: the folder
-holding the workflow/ directory this script sits in (/opt/chip-workflow inside
+holding the workflow/ directory this script sits in (/opt/hemaclone inside
 the image). Outputs, the sample sheet and logs belong to the project folder,
 the current working directory.
 
-Normally launched through Docker by chip.sh; it can also run directly on a
+Normally launched through Docker by hemaclone.sh; it can also run directly on a
 machine where Snakemake and the tools are installed:
   python /path/to/workflow/scripts/run_batches.py --cores 16 --mem-gb 64 --batch-size 1
 """
@@ -76,7 +76,7 @@ def parse_args(argv):
 
     parser = argparse.ArgumentParser(
         prog="run",
-        description="Run the CHIP workflow in batches. Every flag is optional; "
+        description="Run the HemaClone in batches. Every flag is optional; "
                     "defaults come from config/config.yaml.",
         epilog='Arguments after "--" are passed to snakemake unchanged '
                "(except cores, resources and config, which have their own flags).")
@@ -142,7 +142,7 @@ def workflow_version():
         with open(VERSION_FILE) as handle:
             version = handle.read().strip()
     info = {"version": version, "code": WORKFLOW_HOME,
-            "image": os.environ.get("CHIP_IMAGE", "none (not run through chip.sh)"),
+            "image": os.environ.get("HEMACLONE_IMAGE", "none (not run through hemaclone.sh)"),
             "mode": os.environ.get("CHIP_MODE", "direct")}
     if shutil.which("git"):
         commit = subprocess.run(["git", "-C", WORKFLOW_HOME, "rev-parse", "--short", "HEAD"],
@@ -308,7 +308,7 @@ def warn_unlisted_fastq(rows, fastq_dir):
               "and will not be processed:", flush=True)
         for name in unlisted:
             print(f"    {name}", flush=True)
-        print("  If they are new samples, add --rebuild-sheet (or rebuild with: chip.sh samplesheet --force).",
+        print("  If they are new samples, add --rebuild-sheet (or rebuild with: hemaclone.sh samplesheet --force).",
               flush=True)
 
 

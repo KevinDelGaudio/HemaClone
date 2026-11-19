@@ -32,7 +32,7 @@ COLUMNS = ["sample", "unit", "fq1", "fq2", "flowcell", "lane", "barcode", "rg_id
 
 
 def parse_args():
-    parser = argparse.ArgumentParser(description="Build the CHIP workflow sample sheet from a FASTQ folder.")
+    parser = argparse.ArgumentParser(description="Build the HemaClone sample sheet from a FASTQ folder.")
     parser.add_argument("--fastq-dir", required=True, help="folder with the FASTQ files (relative to the project root)")
     parser.add_argument("--out", required=True, help="output TSV, normally config/samples.tsv")
     parser.add_argument("--force", action="store_true", help="overwrite an existing sample sheet")

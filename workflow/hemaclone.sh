@@ -1,13 +1,13 @@
 #!/bin/bash
 # =============================================================================
-# CHIP workflow launcher. Run it from the project folder (FASTQs in fastq/).
+# HemaClone launcher. Run it from the project folder (FASTQs in fastq/).
 #
-#   bash chip.sh run [flags]              run everything: builds config/samples.tsv
+#   bash hemaclone.sh run [flags]              run everything: builds config/samples.tsv
 #                                         from fastq/ when it does not exist yet
-#   bash chip.sh run --help               list every run flag
-#   bash chip.sh samplesheet              only build config/samples.tsv, to inspect it
-#   bash chip.sh shell                    shell inside the container
-#   bash chip.sh build                    build the image (from a code checkout)
+#   bash hemaclone.sh run --help               list every run flag
+#   bash hemaclone.sh samplesheet              only build config/samples.tsv, to inspect it
+#   bash hemaclone.sh shell                    shell inside the container
+#   bash hemaclone.sh build                    build the image (from a code checkout)
 #
 # The workflow code and its defaults come from the image (--image, default:
 # the image this launcher was copied from). --dev uses the code of the checkout
@@ -18,7 +18,7 @@
 # and the tmpdir are mounted automatically; add other host folders with --mount PATH.
 #
 # Get the launcher for a new project from the image:
-#   docker run --rm chip-workflow:<version> cat /opt/chip-workflow/workflow/chip.sh > chip.sh
+#   docker run --rm hemaclone:<version> cat /opt/hemaclone/workflow/hemaclone.sh > hemaclone.sh
 # =============================================================================
 
 set -euo pipefail
@@ -26,7 +26,7 @@ set -euo pipefail
 # Filled in when the image is built (see the Dockerfile)
 DEFAULT_IMAGE=""
 
-IMAGE_HOME="/opt/chip-workflow"
+IMAGE_HOME="/opt/hemaclone"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CHECKOUT="$(dirname "$SCRIPT_DIR")"
 ROOT="$(pwd)"
@@ -75,13 +75,13 @@ checkout_version() {
 
 resolve_image() {
     if [[ -n "$IMAGE_FLAG" ]]; then IMAGE="$IMAGE_FLAG"
-    elif [[ -n "${CHIP_IMAGE:-}" ]]; then IMAGE="$CHIP_IMAGE"
+    elif [[ -n "${HEMACLONE_IMAGE:-}" ]]; then IMAGE="$HEMACLONE_IMAGE"
     elif [[ -n "$DEFAULT_IMAGE" ]]; then IMAGE="$DEFAULT_IMAGE"
-    elif [[ -f "${CHECKOUT}/VERSION" ]]; then IMAGE="chip-workflow:$(checkout_version)"
-    else die "no image given: use --image chip-workflow:<version>"
+    elif [[ -f "${CHECKOUT}/VERSION" ]]; then IMAGE="hemaclone:$(checkout_version)"
+    else die "no image given: use --image hemaclone:<version>"
     fi
     docker image inspect "$IMAGE" >/dev/null 2>&1 \
-        || die "image $IMAGE not found. Build it from a code checkout: bash workflow/chip.sh build"
+        || die "image $IMAGE not found. Build it from a code checkout: bash workflow/hemaclone.sh build"
 }
 
 # Where the code and default config come from: the image, or the checkout (--dev)
@@ -97,7 +97,7 @@ resolve_code() {
         DEFAULT_CONFIG="$(mktemp)"
         trap 'rm -f "$DEFAULT_CONFIG"' EXIT
         docker run --rm "$IMAGE" cat "${IMAGE_HOME}/config/config.yaml" > "$DEFAULT_CONFIG" 2>/dev/null \
-            || die "image $IMAGE contains no workflow code (built before the code was added?). Rebuild it with: bash workflow/chip.sh build, or use --dev"
+            || die "image $IMAGE contains no workflow code (built before the code was added?). Rebuild it with: bash workflow/hemaclone.sh build, or use --dev"
     fi
 }
 
@@ -144,7 +144,7 @@ docker_run() {
         --memory "${mem_gb}g" \
         --memory-swap "${mem_gb}g" \
         -u "$(id -u):$(id -g)" \
-        -e CHIP_IMAGE="$IMAGE" \
+        -e HEMACLONE_IMAGE="$IMAGE" \
         -e CHIP_MODE="$MODE" \
         "${VOLUME_ARGS[@]}" \
         -w "$ROOT" \
@@ -185,7 +185,7 @@ case "$COMMAND" in
 
     build)
         VERSION="$(checkout_version)"
-        TAG="${IMAGE_FLAG:-chip-workflow:${VERSION}}"
+        TAG="${IMAGE_FLAG:-hemaclone:${VERSION}}"
         echo "Building ${TAG} from ${CHECKOUT}"
         docker build -f "${CHECKOUT}/workflow/docker/Dockerfile" -t "$TAG" "${RUN_ARGS[@]}" "$CHECKOUT"
         ;;

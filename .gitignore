@@ -20,3 +20,11 @@ resources/
 # Snakemake state
 .snakemake/
 __pycache__/
+
+# Cohort tables, analysis outputs and local sample lists
+chip/
+chip_unfiltered/
+results/
+*.html
+*_files/
+exclude_ids*.txt

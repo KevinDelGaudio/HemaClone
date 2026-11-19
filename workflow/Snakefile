@@ -1,12 +1,12 @@
 # =============================================================================
-# CHIP calling workflow: alignment, QC, BQSR, tumor-only Mutect2 on the
+# HemaClone: alignment, QC, BQSR, tumor-only Mutect2 on the
 # CHIP gene panel, CH hard filters, Funcotator annotation.
 #
 # Launch from the project folder (batches of N samples, one after another):
-#   bash chip.sh run --cores 32 --mem-gb 96 --batch-size 1
+#   bash hemaclone.sh run --cores 32 --mem-gb 96 --batch-size 1
 #
 # The code and default config live in the workflow home (the folder holding
-# this workflow/ directory: /opt/chip-workflow in the image). Outputs are
+# this workflow/ directory: /opt/hemaclone in the image). Outputs are
 # written to the project folder, the current working directory.
 #
 # Targets:

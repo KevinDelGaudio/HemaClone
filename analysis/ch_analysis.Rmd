@@ -1,0 +1,437 @@
+---
+title: "Clonal Haematopoiesis Analysis"
+author: "Kevin Del Gaudio"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    number_sections: true
+params:
+  project_dir: ""
+---
+
+# Overview
+
+This notebook describes clonal haematopoiesis (CH) called from blood exome
+sequencing with HemaClone, which calls somatic variants in a panel of
+CH genes and classifies each sample as CH positive or negative.
+
+Without a matched non-haematopoietic sample, a somatic call in blood DNA is not
+specific to clonal haematopoiesis. It can also reflect tumour cells or tumour
+DNA in blood, clones selected by prior cytotoxic therapy, constitutional
+mosaicism, a germline variant absent from population databases, or a
+sequencing artefact. Germline heterozygous variants are excluded by design
+through the allele fraction ceiling and the population frequency filter, so
+inherited risk is not assessed. Calls are therefore reported as somatic blood
+variants consistent with CH, and are candidates to review before they are read
+as clonal haematopoiesis.
+
+```{r setup, include=FALSE}
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(maftools)
+library(yaml)
+
+# Folder holding the workflow outputs (chip/, logs/), passed at render time:
+# rmarkdown::render("ch_analysis.Rmd", params = list(project_dir = "/path"))
+PROJECT_DIR <- params$project_dir
+
+if (!nzchar(PROJECT_DIR)) {
+  stop("Set the project folder: rmarkdown::render(..., params = list(project_dir = \"/path\"))")
+}
+if (!dir.exists(PROJECT_DIR)) {
+  stop("PROJECT_DIR not found: ", PROJECT_DIR)
+}
+if (!dir.exists(file.path(PROJECT_DIR, "chip"))) {
+  stop("No chip/ folder inside PROJECT_DIR: ", PROJECT_DIR)
+}
+
+knitr::opts_knit$set(root.dir = PROJECT_DIR)
+knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = FALSE)
+```
+
+# Inputs
+
+## Files and thresholds
+
+The thresholds are read from the settings recorded by the workflow run that
+produced the tables, so the values reported here are the ones that were
+applied.
+
+```{r inputs}
+input_files <- c(
+  samples    = "chip/chip_samples.tsv",
+  calls      = "chip/chip_calls.maf",
+  oncoplot   = "chip/chip_calls.oncoplot.maf",
+  candidates = "chip/chip_candidates.tsv"
+)
+
+missing_inputs <- input_files[!file.exists(input_files)]
+if (length(missing_inputs) > 0) {
+  print(list.files("chip"))
+  stop("Missing inputs: ", paste(missing_inputs, collapse = ", "))
+}
+
+# Most recent real run (not a dry run) whose settings carry a chip block
+settings_files <- sort(list.files("logs/batches", pattern = "^run_.*_settings\\.yaml$",
+                                  full.names = TRUE))
+settings_list <- lapply(settings_files, yaml::read_yaml)
+usable <- vapply(settings_list,
+                 function(s) !is.null(s$chip) && !isTRUE(s$run$dry_run),
+                 logical(1))
+if (!any(usable)) stop("No run settings with a chip block in logs/batches/")
+settings      <- settings_list[[max(which(usable))]]
+settings_file <- settings_files[[max(which(usable))]]
+
+thresholds <- c(
+  min_depth        = settings$ch_filter$min_dp,
+  min_vaf          = settings$ch_filter$min_vaf,
+  max_vaf          = settings$chip$max_vaf,
+  large_clone_vaf  = settings$chip$large_clone_vaf,
+  min_alt_reads    = settings$chip$min_alt_reads,
+  max_binom_p      = settings$chip$max_binom_p,
+  max_gnomad_af    = settings$chip$max_gnomad_af
+)
+
+message("Settings: ", settings_file, " | workflow ", settings$workflow$version)
+data.frame(threshold = names(thresholds), value = unname(thresholds))
+```
+
+## Data loading
+
+Samples without a qualifying call are negatives and stay in every denominator.
+
+```{r load}
+n_report <- function(df, label) {
+  message(sprintf("%-40s n = %d", label, nrow(df)))
+  df
+}
+
+as_flag <- function(x) toupper(as.character(x)) == "TRUE"
+
+ch_samples <- read.delim(input_files[["samples"]], stringsAsFactors = FALSE,
+                         check.names = FALSE) %>%
+  n_report("samples") %>%
+  dplyr::mutate(
+    gnomad_checked  = as_flag(gnomad_checked),
+    CHIP_status     = factor(CHIP_status, levels = c("CHIP+", "CHIP-")),
+    has_large_clone = factor(ifelse(as_flag(has_large_clone), "yes", "no"),
+                             levels = c("yes", "no"))
+  )
+
+if (!all(ch_samples$gnomad_checked)) {
+  stop("gnomAD criterion not applied for: ",
+       paste(ch_samples$Tumor_Sample_Barcode[!ch_samples$gnomad_checked], collapse = ", "))
+}
+
+# Qualifying calls only, for every analysis of the calls themselves
+n_positive <- sum(ch_samples$CHIP_status == "CHIP+")
+if (n_positive > 0) {
+  ch_maf <- maftools::read.maf(
+    maf          = input_files[["calls"]],
+    clinicalData = dplyr::filter(ch_samples, CHIP_status == "CHIP+"),
+    verbose      = FALSE
+  )
+  ch_calls <- as.data.frame(ch_maf@data) %>%
+    dplyr::mutate(t_vaf = as.numeric(t_vaf), t_depth = as.numeric(t_depth))
+} else {
+  ch_maf   <- NULL
+  ch_calls <- data.frame()
+}
+ch_calls <- n_report(ch_calls, "qualifying calls")
+
+# Whole cohort for the oncoplot: one Silent placeholder per CH- sample keeps
+# negatives in the plot and in its denominator. maftools cannot load a MAF
+# made of placeholders only, so it is loaded when at least one sample is CH+.
+onco_table <- read.delim(input_files[["oncoplot"]], comment.char = "#",
+                         stringsAsFactors = FALSE, check.names = FALSE)
+onco_ids   <- unique(as.character(onco_table$Tumor_Sample_Barcode))
+
+ch_maf_onco <- NULL
+if (n_positive > 0) {
+  ch_maf_onco <- maftools::read.maf(maf = input_files[["oncoplot"]],
+                                    clinicalData = ch_samples, verbose = FALSE)
+}
+
+if (!setequal(onco_ids, ch_samples$Tumor_Sample_Barcode)) {
+  stop("Samples differ between the oncoplot MAF and the sample table: ",
+       paste(sort(setdiff(union(onco_ids, ch_samples$Tumor_Sample_Barcode),
+                          intersect(onco_ids, ch_samples$Tumor_Sample_Barcode))),
+             collapse = ", "))
+}
+
+candidates <- read.delim(input_files[["candidates"]], stringsAsFactors = FALSE,
+                         check.names = FALSE) %>%
+  n_report("candidate calls")
+
+criteria_cols <- grep("^pass_", names(candidates), value = TRUE)
+candidates <- candidates %>%
+  dplyr::mutate(dplyr::across(dplyr::all_of(c(criteria_cols, "qualifies", "counts_for_status")),
+                              as_flag))
+```
+
+# Variant Calling and Filtering
+
+```{r methods_values, include=FALSE}
+panel_bed <- settings$reference$gene_panel_bed
+panel_pad <- regmatches(panel_bed, regexpr("(?<=exome_pad)[0-9]+", panel_bed, perl = TRUE))
+panel_text <- if (length(panel_pad) == 1) {
+  paste0("the CH gene panel restricted to the exons covered by the exome capture, ",
+         "extended by ", panel_pad, " bp on each side to include splice sites (",
+         panel_bed, ")")
+} else {
+  paste0("the CH gene panel (", panel_bed, ")")
+}
+
+pon_text <- if (is.null(settings$pon$vcf)) {
+  "No panel of normals was used."
+} else if (settings$pon$mode == "annotate") {
+  paste0("Calls at sites present in a panel of normals (", basename(settings$pon$vcf),
+         ") were flagged rather than removed at this stage.")
+} else {
+  paste0("Sites present in a panel of normals (", basename(settings$pon$vcf),
+         ") were filtered at calling.")
+}
+pon_criterion <- if (is.null(settings$pon$vcf)) {
+  "not applicable, no panel of normals was used"
+} else {
+  paste0("absent from the panel of normals, except at ",
+         length(settings$chip$pon_exempt_hotspots),
+         " known CH hotspots (", paste(sub(":p\\.", " ", settings$chip$pon_exempt_hotspots),
+                                       collapse = ", "), ")")
+}
+```
+
+Blood samples were processed with HemaClone version
+`r settings$workflow$version` (GATK `r settings$tools$gatk_version`), without a
+matched normal.
+
+1. **Input check.** Each FASTQ pair was verified to decompress completely,
+   with matching read counts and read names in the same order in both mates.
+2. **Alignment.** Reads were aligned to hg38 (`r settings$reference$fasta`)
+   with bwa-mem2, one read group per sequencing lane, then coordinate sorted.
+3. **Duplicate marking.** Lanes of the same sample were merged and PCR and
+   optical duplicates marked.
+4. **Base quality recalibration.** Base qualities were recalibrated over the
+   exome capture targets, using dbSNP and the Mills and 1000 Genomes indels as
+   known sites.
+5. **Somatic calling.** Mutect2 was run in tumour-only mode on
+   `r panel_text`, with gnomAD allele frequencies as germline resource.
+6. **Artefact models.** A read orientation model and a per-sample
+   contamination estimate, from pileups at common variant sites, were passed
+   to FilterMutectCalls, and only PASS calls were kept.
+7. **Panel of normals.** `r pon_text`
+8. **Depth and allele fraction.** Per sample, calls with depth below
+   `r thresholds[["min_depth"]]` or VAF below `r thresholds[["min_vaf"]]` were
+   removed.
+9. **Annotation.** The gnomAD allele frequency of each call was added by
+   matching position and allele, and calls were annotated with Funcotator
+   (`r settings$reference$funcotator_ds`).
+
+A call was retained as clonal haematopoiesis when it met all of the following:
+
+- protein-altering consequence (`r paste(gsub("_", " ", settings$chip$variant_classes), collapse = ", ")`)
+- at least `r thresholds[["min_alt_reads"]]` reads supporting the alternate allele
+- depth of at least `r thresholds[["min_depth"]]` and VAF between
+  `r thresholds[["min_vaf"]]` and `r thresholds[["max_vaf"]]`
+- VAF significantly below the heterozygous fraction of 0.5, by a one-sided
+  binomial test at p < `r thresholds[["max_binom_p"]]`
+- gnomAD allele frequency of at most `r thresholds[["max_gnomad_af"]]`, with
+  variants absent from gnomAD retained
+- `r pon_criterion`
+
+A sample was classified as CH positive with at least one retained call, in any
+panel gene except `r paste(settings$chip$status_exclude_genes, collapse = ", ")`,
+which were reported but not counted. A clone was considered large at VAF of at
+least `r thresholds[["large_clone_vaf"]]`.
+
+# Quality Control
+
+## Filtering overview
+
+Each candidate call is counted against the criteria it fails. The calls
+removed by a single criterion show which threshold the result depends on most,
+and are the first to revisit if that threshold changes.
+
+```{r filtering, fig.width=8, fig.height=4.5, out.width="80%"}
+fail_matrix <- !as.matrix(candidates[, criteria_cols, drop = FALSE])
+
+filter_summary <- data.frame(
+  criterion         = sub("^pass_", "", criteria_cols),
+  failing           = colSums(fail_matrix),
+  failing_only_this = colSums(fail_matrix & rowSums(fail_matrix) == 1),
+  row.names = NULL
+)
+
+message("Candidates: ", nrow(candidates),
+        " | qualifying: ", sum(candidates$qualifies),
+        " | counted for CH status: ", sum(candidates$counts_for_status))
+filter_summary
+
+filter_summary %>%
+  tidyr::pivot_longer(c(failing, failing_only_this), names_to = "count", values_to = "calls") %>%
+  ggplot(aes(x = reorder(criterion, calls), y = calls, fill = count)) +
+  geom_col(position = "dodge") +
+  coord_flip() +
+  scale_fill_manual(values = c(failing = "#9ECAE1", failing_only_this = "#2171B5"),
+                    labels = c("failing", "failing this criterion only")) +
+  theme_classic() +
+  labs(x = NULL, y = "Candidate calls", fill = NULL)
+```
+
+## Allele fraction
+
+Clonal expansions are minority populations, so qualifying calls should sit
+well below the heterozygous fraction of 0.5. Candidates near 0.5 or 1.0 are
+germline variants, and their exclusion is visible as the gap between the two
+distributions.
+
+```{r vaf, fig.width=9, fig.height=4, out.width="90%"}
+candidates %>%
+  dplyr::mutate(group = ifelse(counts_for_status, "qualifying", "excluded")) %>%
+  ggplot(aes(x = t_vaf, fill = group)) +
+  geom_histogram(bins = 50, position = "identity", alpha = 0.7) +
+  geom_vline(xintercept = thresholds[["min_vaf"]], linetype = "dashed") +
+  geom_vline(xintercept = thresholds[["large_clone_vaf"]], linetype = "dotted") +
+  geom_vline(xintercept = thresholds[["max_vaf"]], linetype = "dashed") +
+  geom_vline(xintercept = 0.5, colour = "grey50") +
+  scale_fill_manual(values = c(excluded = "grey70", qualifying = "#B2182B")) +
+  theme_classic() +
+  labs(x = "Blood VAF", y = "Calls", fill = NULL)
+```
+
+## Recurrent positions
+
+Independent clonal events rarely share an exact coordinate across unrelated
+individuals, except at known hotspots. A recurrent position outside a hotspot
+is more likely an artefact or a germline variant, and is the first call to
+review.
+
+```{r recurrent}
+recurrent_pos <- data.frame()
+if (nrow(ch_calls) > 0) {
+  recurrent_pos <- ch_calls %>%
+    dplyr::distinct(Tumor_Sample_Barcode, Chromosome, Start_Position, Hugo_Symbol, Protein_Change) %>%
+    dplyr::count(Chromosome, Start_Position, Hugo_Symbol, Protein_Change, name = "n_samples") %>%
+    dplyr::filter(n_samples > 1) %>%
+    dplyr::arrange(dplyr::desc(n_samples))
+}
+
+if (nrow(recurrent_pos) == 0) message("No position is shared by more than one sample.")
+recurrent_pos
+```
+
+# Clonal Haematopoiesis Landscape
+
+## Prevalence
+
+A sample is CH positive when it carries at least one qualifying call in a gene
+that counts for status; clone size is reported separately, with a large clone
+defined by the VAF boundary above.
+
+```{r prevalence}
+ch_samples %>%
+  dplyr::count(CHIP_status, has_large_clone, .drop = FALSE) %>%
+  dplyr::mutate(pct = round(100 * n / nrow(ch_samples), 1))
+
+ch_samples %>%
+  dplyr::select(Tumor_Sample_Barcode, CHIP_status, n_CHIP_mutations, max_VAF,
+                has_large_clone, genes_mutated, other_genes_qualifying) %>%
+  dplyr::arrange(CHIP_status, dplyr::desc(max_VAF))
+```
+
+## Cohort summary
+
+Distribution of variant classes and types across the qualifying calls, and
+the number of calls per sample.
+
+```{r summary, fig.width=12, fig.height=8, out.width="100%"}
+if (nrow(ch_calls) > 0) {
+  maftools::plotmafSummary(maf = ch_maf, rmOutlier = FALSE, addStat = "median",
+                           dashboard = TRUE, titvRaw = FALSE)
+} else {
+  message("No qualifying calls: nothing to summarise.")
+}
+```
+
+## Oncoplot
+
+Every sample is shown, negatives included, annotated by CH status and by the
+presence of a large clone.
+
+```{r oncoplot, fig.width=12, fig.height=9, out.width="100%"}
+if (nrow(ch_calls) > 0) {
+  maftools::oncoplot(
+    maf                     = ch_maf_onco,
+    genes                   = head(maftools::getGeneSummary(ch_maf)$Hugo_Symbol, 30),
+    clinicalFeatures        = c("CHIP_status", "has_large_clone"),
+    annotationColor         = list(
+      CHIP_status     = c("CHIP+" = "#B2182B", "CHIP-" = "#D9D9D9"),
+      has_large_clone = c(yes = "#2166AC", no = "#F0F0F0")
+    ),
+    anno_height             = 2,
+    sortByAnnotation        = TRUE,
+    annotationOrder         = c("CHIP+", "CHIP-"),
+    showTumorSampleBarcodes = TRUE,
+    barcode_mar             = 10,
+    drawRowBar              = TRUE,
+    drawColBar              = TRUE
+  )
+}
+```
+
+## Clone size by gene
+
+Allele fraction of each qualifying call, grouped by gene. For a heterozygous
+mutation, the share of blood cells carrying the clone is about twice its VAF.
+
+```{r clone_size, fig.width=9, fig.height=6, out.width="90%"}
+if (nrow(ch_calls) > 0) {
+  maftools::plotVaf(maf = ch_maf, vafCol = "t_vaf", top = 20)
+}
+```
+
+## Mutation positions
+
+Position of the calls along the protein for genes mutated more than once. A
+cluster at a single residue points to a hotspot; calls spread across the
+protein are typical of loss-of-function genes.
+
+```{r lollipop, fig.width=14, fig.height=5, out.width="100%"}
+lollipop_genes <- character(0)
+if (!is.null(ch_maf)) {
+  gene_summary   <- maftools::getGeneSummary(ch_maf)
+  lollipop_genes <- gene_summary$Hugo_Symbol[gene_summary$total >= 2]
+}
+
+if (length(lollipop_genes) == 0) message("No gene is mutated more than once.")
+for (g in lollipop_genes) {
+  # capture.output drops the transcript table printed alongside the plot
+  tryCatch(
+    invisible(capture.output(
+            maftools::lollipopPlot(maf = ch_maf, gene = g, AACol = "Protein_Change",
+                             showMutationRate = TRUE,
+                             showDomainLabel = FALSE)
+    )),
+    error = function(e) message("Skipped ", g, ": ", conditionMessage(e))
+  )
+}
+```
+
+# Export
+
+```{r export}
+dir.create("results", showWarnings = FALSE)
+write.csv(ch_samples,     "results/ch_samples.csv",          row.names = FALSE)
+write.csv(ch_calls,       "results/ch_calls.csv",            row.names = FALSE)
+write.csv(recurrent_pos,  "results/ch_recurrent_positions.csv", row.names = FALSE)
+write.csv(filter_summary, "results/ch_filter_summary.csv",   row.names = FALSE)
+```
+
+# Session Info
+
+```{r session}
+sessionInfo()
+```

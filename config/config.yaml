@@ -1,8 +1,8 @@
 # =============================================================================
-# CHIP workflow configuration: defaults for every setting.
+# HemaClone configuration: defaults for every setting.
 #
 # Change values for one run from the launch command:
-#   bash workflow/chip.sh run --cores 32 --mem-gb 96 --batch-size 1 \
+#   bash workflow/hemaclone.sh run --cores 32 --mem-gb 96 --batch-size 1 \
 #       --resources-dir /data/hg38_resources --tmpdir /scratch/tmp \
 #       --set ch_filter.min_vaf=0.01
 # or keep site-specific values in a separate YAML file with the same keys
