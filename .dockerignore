@@ -1,0 +1,9 @@
+# Only the workflow code and its default config go into the image.
+# Everything else (FASTQs, sample sheets, results, references) is excluded.
+*
+!VERSION
+!workflow/
+!config/config.yaml
+!config/multiqc_config.yaml
+!config/profile/
+**/__pycache__

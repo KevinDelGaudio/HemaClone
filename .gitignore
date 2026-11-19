@@ -1,0 +1,22 @@
+# Site-specific settings and sample information: never publish
+config/local.yaml
+config/samples.tsv
+config/batches/
+
+# Data and results
+fastq/
+bam/
+bqsr/
+vcf/
+orientation/
+contamination/
+maf/
+qc/
+logs/
+benchmarks/
+tmp/
+resources/
+
+# Snakemake state
+.snakemake/
+__pycache__/

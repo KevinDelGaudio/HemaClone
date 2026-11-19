@@ -1,0 +1,18 @@
+# Tool versions for the CHIP workflow image.
+# Pinned versions; tools.gatk_version in config.yaml is checked against gatk4.
+name: chip
+channels:
+  - conda-forge
+  - bioconda
+dependencies:
+  - python=3.12
+  - gatk4=4.6.2.0
+  - bwa-mem2=2.2.1
+  - samtools=1.24
+  - bcftools=1.24
+  - fastqc=0.12.1
+  - multiqc=1.35
+  - snakemake-minimal=9.27.1
+  - pandas=3.1.0
+  - pyyaml
+  - r-base=4.4.1

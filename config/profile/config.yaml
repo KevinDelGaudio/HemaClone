@@ -1,0 +1,10 @@
+# =============================================================================
+# Snakemake run behaviour. Cores and memory are not set here: the launcher
+# passes them from config.yaml (machine) or from --cores / --mem-gb.
+# =============================================================================
+
+keep-going: true
+rerun-incomplete: true
+printshellcmds: true
+# Wait for outputs on slow or network storage to appear
+latency-wait: 60

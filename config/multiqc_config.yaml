@@ -1,0 +1,31 @@
+title: "CHIP cohort: FASTQ and BAM Quality Control"
+subtitle: "Blood whole-exome sequencing for clonal hematopoiesis calling"
+intro_text: "FastQC (raw reads), samtools stats/flagstat/idxstats, Picard MarkDuplicates, CollectAlignmentSummaryMetrics, CollectInsertSizeMetrics and CollectHsMetrics."
+
+# Picard sample names from file names, not from the INPUT= header
+# (MarkDuplicates INPUT lists the per-lane BAMs of merged samples).
+use_filename_as_sample_name:
+  - picard
+
+extra_fn_clean_exts:
+  - ".markdup"
+  - "_001"
+  - ".stats"
+  - ".flagstat"
+  - ".idxstats"
+  - ".hs_metrics"
+  - ".dup_metrics"
+  - ".alignment_summary_metrics"
+  - ".insert_size_metrics"
+
+table_columns_visible:
+  Picard:
+    PCT_TARGET_BASES_20X: True
+    PCT_TARGET_BASES_50X: True
+    MEAN_TARGET_COVERAGE: True
+    PCT_SELECTED_BASES: True
+    FOLD_ENRICHMENT: True
+    PERCENT_DUPLICATION: True
+    MEDIAN_INSERT_SIZE: True
+
+max_table_rows: 500

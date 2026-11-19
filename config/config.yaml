@@ -1,0 +1,195 @@
+# =============================================================================
+# CHIP workflow configuration: defaults for every setting.
+#
+# Change values for one run from the launch command:
+#   bash workflow/chip.sh run --cores 32 --mem-gb 96 --batch-size 1 \
+#       --resources-dir /data/hg38_resources --tmpdir /scratch/tmp \
+#       --set ch_filter.min_vaf=0.01
+# or keep site-specific values in a separate YAML file with the same keys
+# (e.g. config/local.yaml, not shared) and pass it with --settings.
+#
+# Precedence: this file < --settings file < --set < dedicated flags.
+# Relative paths are relative to the project root, where the workflow is launched.
+# =============================================================================
+
+samples: "config/samples.tsv"
+
+# FASTQ folder (flag: --fastq-dir). The sample sheet is built from it when the
+# sheet does not exist yet, or with --rebuild-sheet; an existing sheet is used
+# as it is, with a warning for FASTQ files it does not list.
+fastq_dir: "fastq"
+
+# Machine limits for a run (flags: --cores, --mem-gb).
+# With Docker, cores and mem_gb are hard limits on the container: it can never
+# use more. Jobs are scheduled into schedule_fraction of mem_gb, leaving
+# headroom for Java overhead below the hard limit.
+machine:
+  cores: 16
+  mem_gb: 64
+  schedule_fraction: 0.9
+
+# Samples processed per batch (flag: --batch-size).
+# Each batch runs to completion before the next starts.
+batch_size: 1
+
+# Scratch space for sorting and Java temp files (flag: --tmpdir)
+tmpdir: "tmp"
+
+# Reference resources (flag: --resources-dir sets reference.dir).
+# File names are looked up inside dir; a value starting with / is used as is.
+# Defaults are the GATK hg38 resource bundle names.
+reference:
+  dir: "resources"
+  fasta: "Homo_sapiens_assembly38.fasta"
+  exome_intervals: "exome_targets.hg38.interval_list"
+  gene_panel_bed: "chip_genes.bed"
+  gnomad: "af-only-gnomad.hg38.vcf.gz"
+  common_variants: "small_exac_common_3.hg38.vcf.gz"
+  dbsnp: "Homo_sapiens_assembly38.dbsnp138.vcf"
+  mills: "Mills_and_1000G_gold_standard.indels.hg38.vcf.gz"
+  funcotator_ds: "funcotator_dataSources"
+
+tools:
+  bwa: "bwa-mem2.avx2"
+  # The run stops if `gatk --version` reports a different version. null = no check.
+  gatk_version: "4.6.2.0"
+
+# CH hard filters, applied per genotype (FORMAT/DP and FORMAT/AF)
+ch_filter:
+  min_dp: 100
+  min_vaf: 0.02
+
+# Panel of normals (bgzipped VCF with .tbi index), used by default.
+# A bare file name is looked up inside the resources folder (reference.dir,
+# flag --resources-dir); a value starting with / is used as is.
+# Default: the GATK hg38 bundle panel built from 1000 Genomes samples.
+# Do not use a panel built from the cohort being analysed: recurrent CHIP
+# hotspots (e.g. DNMT3A R882, JAK2 V617F) would be treated as artifacts.
+#   mode: annotate -> calls are kept; sites in the panel get an INFO/PON flag
+#   mode: filter   -> panel passed to Mutect2; sites in it fail FILTER
+# Turn it off for one run with: --set pon.vcf=null
+pon:
+  vcf: "1000g_pon.hg38.vcf.gz"
+  mode: "annotate"
+
+# CHIP classification of the ch_final calls. Depth and VAF floors are the
+# ch_filter values above. A call qualifies when every criterion passes:
+#   - Variant_Classification in variant_classes (protein-altering)
+#   - at least min_alt_reads alternate reads
+#   - depth >= ch_filter.min_dp and VAF >= ch_filter.min_vaf (re-checked on MAF counts)
+#   - VAF <= max_vaf: heterozygous germline sits near 0.5 and cannot be
+#     separated from a very large clone without a matched normal
+#   - one-sided binomial test of VAF below 0.5 with p < max_binom_p
+#   - gnomAD AF <= max_gnomad_af, from reference.gnomad matched by allele
+#     (absent from gnomAD = 0)
+#   - when a PoN is used: not in the PoN, unless at a hotspot in pon_exempt_hotspots
+# A sample is CHIP+ with at least one qualifying call in a gene not listed in
+# status_exclude_genes. Calls in excluded genes are reported, not counted.
+chip:
+  max_vaf: 0.35
+  max_binom_p: 0.01
+  min_alt_reads: 3
+  max_gnomad_af: 0.01
+  large_clone_vaf: 0.10
+  variant_classes:
+    - Missense_Mutation
+    - Nonsense_Mutation
+    - Nonstop_Mutation
+    - Frame_Shift_Del
+    - Frame_Shift_Ins
+    - In_Frame_Del
+    - In_Frame_Ins
+    - Splice_Site
+    - Translation_Start_Site
+  # Panel genes called and reported but not counted for CHIP status
+  status_exclude_genes: [IL1A, IL1B, IL18, IL33, NLRP3, P2RX7]
+  # GENE:protein-change prefix; a PoN-flagged call matching one is kept
+  pon_exempt_hotspots:
+    - "DNMT3A:p.R882"
+    - "JAK2:p.V617F"
+    - "SF3B1:p.K700"
+    - "SF3B1:p.K666"
+    - "SRSF2:p.P95"
+    - "U2AF1:p.S34"
+    - "U2AF1:p.Q157"
+    - "IDH1:p.R132"
+    - "IDH2:p.R140"
+    - "IDH2:p.R172"
+    - "GNB1:p.K57"
+    - "KRAS:p.G12"
+    - "KRAS:p.G13"
+    - "KRAS:p.Q61"
+    - "NRAS:p.G12"
+    - "NRAS:p.G13"
+    - "NRAS:p.Q61"
+
+qc:
+  # Conda env holding fastqc and multiqc; null = take them from PATH
+  # (null is correct inside the Docker image).
+  conda_env: null
+  # Relative to the workflow home (the copy inside the image), not the project
+  multiqc_config: "config/multiqc_config.yaml"
+  thresholds:
+    min_mean_coverage: 30
+    min_pct_target_20x: 0.80
+    min_pct_selected: 0.40
+    max_pct_dupe: 0.50
+    max_dropout: 10.0
+
+# Tool parameters. "extra" is appended verbatim to the command line.
+tool_params:
+  bwa_map:
+    sort_mem_per_thread: "3G"
+    extra: ""
+  markdup:
+    extra: ""
+  base_recalibrator:
+    extra: ""
+  apply_bqsr:
+    extra: ""
+  mutect2:
+    extra: ""
+  filter_mutect:
+    extra: ""
+  funcotator:
+    ref_version: "hg38"
+    extra: ""
+  hs_metrics:
+    coverage_cap: 1000
+    min_mapq: 20
+    min_baseq: 20
+  insert_size:
+    min_pct: 0.5
+
+# Fraction of a job's memory given to the Java heap (-Xmx)
+java_heap_fraction: 0.85
+
+# Size of each job: threads and memory (MB). Within a batch, Snakemake runs as
+# many jobs at once as fit in the machine limits above.
+# Per-run override, e.g.: --set job_sizes.mutect2.mem_mb=20000
+job_sizes:
+  fastq_check:             {threads: 3, mem_mb: 1000}
+  bwa_map:                 {threads: 8, mem_mb: 45000}
+  markdup:                 {threads: 2, mem_mb: 16000}
+  base_recalibrator:       {threads: 2, mem_mb: 12000}
+  apply_bqsr:              {threads: 2, mem_mb: 12000}
+  mutect2:                 {threads: 8, mem_mb: 12000}
+  learn_orientation:       {threads: 1, mem_mb: 4000}
+  pileup_summaries:        {threads: 1, mem_mb: 4000}
+  calculate_contamination: {threads: 1, mem_mb: 4000}
+  filter_mutect:           {threads: 1, mem_mb: 4000}
+  pon_annotate:            {threads: 1, mem_mb: 2000}
+  select_pass:             {threads: 1, mem_mb: 4000}
+  ch_flag:                 {threads: 1, mem_mb: 4000}
+  ch_select:               {threads: 1, mem_mb: 4000}
+  gnomad_annotate:         {threads: 1, mem_mb: 1000}
+  funcotator:              {threads: 1, mem_mb: 12000}
+  fastqc:                  {threads: 1, mem_mb: 2000}
+  samtools_qc:             {threads: 2, mem_mb: 2000}
+  alignment_summary:       {threads: 1, mem_mb: 8000}
+  insert_size:             {threads: 1, mem_mb: 8000}
+  hs_metrics:              {threads: 1, mem_mb: 8000}
+  multiqc:                 {threads: 1, mem_mb: 8000}
+  qc_flags:                {threads: 1, mem_mb: 1000}
+  chip_sample:             {threads: 1, mem_mb: 2000}
+  chip_cohort:             {threads: 1, mem_mb: 4000}

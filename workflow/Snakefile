@@ -1,0 +1,58 @@
+# =============================================================================
+# CHIP calling workflow: alignment, QC, BQSR, tumor-only Mutect2 on the
+# CHIP gene panel, CH hard filters, Funcotator annotation.
+#
+# Launch from the project folder (batches of N samples, one after another):
+#   bash chip.sh run --cores 32 --mem-gb 96 --batch-size 1
+#
+# The code and default config live in the workflow home (the folder holding
+# this workflow/ directory: /opt/chip-workflow in the image). Outputs are
+# written to the project folder, the current working directory.
+#
+# Targets:
+#   per_sample  every per-sample output (MAFs, per-sample QC, CHIP classification)
+#   cohort_qc   MultiQC report, qc_flags.tsv and the CHIP tables over the whole sheet
+#   all         both
+# =============================================================================
+
+import os
+
+from snakemake.utils import min_version
+
+min_version("8.0")
+
+WORKFLOW_HOME = os.path.dirname(workflow.basedir)
+
+configfile: os.path.join(WORKFLOW_HOME, "config", "config.yaml")
+
+include: "rules/common.smk"
+
+wildcard_constraints:
+    sample = "|".join(re.escape(s) for s in SAMPLES),
+    unit = "|".join(re.escape(u) for u in UNIT_NAMES),
+    fq = "|".join(re.escape(b) for b in FASTQ_BY_BASE),
+    tier = "all|ch_final",
+
+
+rule all:
+    input:
+        sample_outputs(),
+        cohort_outputs(),
+
+
+rule per_sample:
+    input:
+        sample_outputs(),
+
+
+rule cohort_qc:
+    input:
+        cohort_outputs(),
+
+
+include: "rules/mapping.smk"
+include: "rules/qc.smk"
+include: "rules/bqsr.smk"
+include: "rules/calling.smk"
+include: "rules/annotation.smk"
+include: "rules/chip.smk"
