@@ -33,8 +33,10 @@ ROOT="$(pwd)"
 
 die() { echo "ERROR: $*" >&2; exit 1; }
 
+# Help: the header comment, from the line after the first "# ===" rule to the next one
 usage() {
-    sed -n '3,21p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+    awk 'NR > 2 && /^# =+$/ { exit }
+         NR > 2 { sub(/^# ?/, ""); print }' "${BASH_SOURCE[0]}"
     exit 0
 }
 
@@ -145,7 +147,7 @@ docker_run() {
         --memory-swap "${mem_gb}g" \
         -u "$(id -u):$(id -g)" \
         -e HEMACLONE_IMAGE="$IMAGE" \
-        -e CHIP_MODE="$MODE" \
+        -e HEMACLONE_MODE="$MODE" \
         "${VOLUME_ARGS[@]}" \
         -w "$ROOT" \
         "$IMAGE" \

@@ -137,6 +137,7 @@ rule multiqc:
     resources:
         mem_mb = mem_of("multiqc"),
     log: "logs/multiqc/multiqc.log"
+    benchmark: "benchmarks/multiqc/multiqc.tsv"
     shell:
         "{params.run} multiqc qc/fastqc qc/bam qc/markdup"
         " --config {input.config}"
@@ -161,5 +162,6 @@ rule qc_flags:
     resources:
         mem_mb = mem_of("qc_flags"),
     log: "logs/qc_flags/qc_flags.log"
+    benchmark: "benchmarks/qc_flags/qc_flags.tsv"
     script:
         "../scripts/qc_flags.py"

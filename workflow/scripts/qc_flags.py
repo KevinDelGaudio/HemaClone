@@ -64,8 +64,7 @@ def flags_for(row, thr):
     return flags
 
 
-def main(snakemake):
-    log = open(snakemake.log[0], "w")
+def main(snakemake, log):
     samples = snakemake.params.samples
     thr = snakemake.params.thresholds
     hs_files = list(snakemake.input.hs)
@@ -73,7 +72,10 @@ def main(snakemake):
     dup_files = list(snakemake.input.dup)
 
     if not (len(samples) == len(hs_files) == len(insert_files) == len(dup_files)):
-        sys.exit("qc_flags: sample and metrics file counts differ")
+        message = "qc_flags: sample and metrics file counts differ"
+        # Snakemake does not capture a script's stderr in the rule log
+        print(f"ERROR: {message}", file=log, flush=True)
+        sys.exit(message)
 
     rows = []
     for sample, hs_path, insert_path, dup_path in zip(samples, hs_files, insert_files, dup_files):
@@ -109,7 +111,7 @@ def main(snakemake):
     for r in flagged:
         print(f"  {r['sample']}: cov={r['mean_target_coverage']} 20x={r['pct_target_20x']} "
               f"dup={r['pct_exc_dupe']} {r['flags']}", file=log)
-    log.close()
 
 
-main(snakemake)
+with open(snakemake.log[0], "w") as log_handle:
+    main(snakemake, log_handle)

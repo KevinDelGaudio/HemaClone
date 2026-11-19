@@ -21,6 +21,7 @@ rule chip_sample:
     resources:
         mem_mb = mem_of("chip_sample"),
     log: "logs/chip_sample/{sample}.log"
+    benchmark: "benchmarks/chip_sample/{sample}.tsv"
     script:
         "../scripts/chip_sample.py"
 
@@ -41,5 +42,6 @@ rule chip_cohort:
     resources:
         mem_mb = mem_of("chip_cohort"),
     log: "logs/chip_cohort/chip_cohort.log"
+    benchmark: "benchmarks/chip_cohort/chip_cohort.tsv"
     script:
         "../scripts/chip_cohort.py"

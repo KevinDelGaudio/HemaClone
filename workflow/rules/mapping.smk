@@ -59,8 +59,7 @@ rule markdup:
         bai = "bam/{sample}.markdup.bai",
         metrics = "qc/markdup/{sample}.dup_metrics.txt",
     params:
-        inputs = lambda wc: " ".join(f"-I bam/units/{wc.sample}.{u}.sorted.bam"
-                                     for u in units_of(wc.sample)),
+        inputs = lambda wc, input: " ".join(f"-I {bam}" for bam in input),
         java = java_opts,
         tmp = config["tmpdir"],
         extra = TP["markdup"]["extra"],

@@ -47,6 +47,7 @@ workflow/scripts/             make_samplesheet.py, run_batches.py, check_fastq_p
                               qc_flags.py, chip_sample.py, chip_cohort.py
 tests/make_fixture.sh         synthetic project (tiny FASTQs, empty resources) for dry runs
 tests/ci_checks.sh            checks run by CI against an image
+tests/compare_outputs.sh      compares the results of two runs (outputs-identical changes)
 .github/workflows/ci.yml      CI on pull requests and pushes to main and release branches
 .github/workflows/release.yml image published to GHCR when a release is published
 ```
@@ -65,7 +66,7 @@ input FASTQs; outputs split by type (`bam/`, `bqsr/`, `vcf/`, `orientation/`, `m
   `docker run --rm hemaclone:<version> cat /opt/hemaclone/workflow/hemaclone.sh > hemaclone.sh`
 - Build: `bash workflow/hemaclone.sh build` (adds the proxy build args when needed)
 - Published images: each GitHub release `vX.Y.Z` builds the image and pushes it to `ghcr.io/kevindelgaudio/hemaclone:X.Y.Z`; the release stops if the tag is not `v` + `VERSION`. The launcher expects the local name, so after pulling: `docker tag ghcr.io/kevindelgaudio/hemaclone:X.Y.Z hemaclone:X.Y.Z`
-- CI: every pull request builds the image (tools layer cached) and runs `tests/ci_checks.sh`: script syntax, launcher dry run and whole-graph dry run on a synthetic project, Snakemake lint (reported, not blocking; the per-rule container lint does not apply, since the whole workflow runs in one image). Nothing is aligned or called, so CI catches broken rules, settings and launcher logic, not wrong results
+- CI: every pull request builds the image (tools layer cached) and runs `tests/ci_checks.sh`: script syntax, launcher dry run and whole-graph dry run on a synthetic project, Snakemake lint (blocking; the per-rule container lint is ignored, since the whole workflow runs in one image). Nothing is aligned or called, so CI catches broken rules, settings and launcher logic, not wrong results
 
 ## 4. Launching
 
@@ -81,6 +82,7 @@ Main flags: `--cores`, `--mem-gb` (hard container limits), `--batch-size`,
 - Jobs are scheduled into `machine.schedule_fraction` (0.9) of `--mem-gb`, leaving headroom for Java overhead
 - Java heap = `java_heap_fraction` (0.85) of each job's memory; `--set job_sizes.<rule>.mem_mb=N` resizes a job
 - Failed samples do not stop the run; they are listed in `logs/batches/failed_<time>.tsv`
+- Every rule writes a log (`logs/<rule>/`), including the error that stopped it, and a runtime and memory benchmark (`benchmarks/<rule>/`)
 
 Example used in production (one sample per batch, 96 GB):
 

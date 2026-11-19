@@ -144,21 +144,16 @@ rule pon_annotate:
     resources:
         mem_mb = mem_of("pon_annotate"),
     log: "logs/pon_annotate/{sample}.log"
+    benchmark: "benchmarks/pon_annotate/{sample}.tsv"
     shell:
         "( bcftools annotate -a {input.pon} -m +PON -Oz -o {output.vcf} {input.vcf}"
         " && bcftools index -t {output.vcf} ) > {log} 2>&1"
 
 
-def filtered_vcf(wildcards):
-    if PON_ANNOTATE:
-        return f"vcf/filtered/{wildcards.sample}.filtered.pon.vcf.gz"
-    return f"vcf/filtered/{wildcards.sample}.filtered.vcf.gz"
-
-
 rule select_pass:
     input:
         vcf = filtered_vcf,
-        tbi = lambda wc: filtered_vcf(wc) + ".tbi",
+        tbi = lambda wc: f"{filtered_vcf(wc)}.tbi",
     output:
         vcf = "vcf/pass/{sample}.pass.vcf.gz",
         tbi = "vcf/pass/{sample}.pass.vcf.gz.tbi",
