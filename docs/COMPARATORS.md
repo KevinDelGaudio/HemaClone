@@ -75,8 +75,10 @@ about 20; SOR about 2–3; SAF/SAR about 3–5.
 - The underlying data are available on request only.
 
 **Relevance for the comparison.** Complementary rather than competing: it
-filters calls that HemaClone produces. Its strand-bias, repetitive-region and
-within-cohort prevalence filters are the ones HemaClone lacks. A natural
+filters calls that HemaClone produces. Its strand-bias and repetitive-region
+filters are the ones HemaClone lacks. Its population (within-cohort prevalence)
+filter has no counterpart by design: HemaClone classifies each sample from its
+own data only. A natural
 analysis is HemaClone calls with and without qcCHIP filtering.
 
 ---
@@ -120,5 +122,6 @@ of indeterminate potential in human genetic data sets. *Blood*.
 Claimed strengths to substantiate: end-to-end reproducibility from FASTQ,
 resource-bounded local execution, per-criterion auditable outputs,
 maftools-ready MAFs including CH negatives, preflight and fail-loud checks.
-Gaps to close or acknowledge: single caller, no strand-bias, repeat-region or
-within-cohort recurrence filters, no benchmark.
+Gaps to close or acknowledge: single caller, no strand-bias or repeat-region
+filters, no benchmark. Design difference to explain: no within-cohort
+recurrence filter, because each sample is classified independently.

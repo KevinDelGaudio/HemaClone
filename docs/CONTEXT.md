@@ -23,6 +23,7 @@ Requirements set at design time:
 - lane-split and non-split FASTQs in the same run, without merging FASTQs
 - auto-built sample sheet
 - CHIP classification inside the workflow, outputs directly usable by maftools
+- each sample classified from its own data only: results do not depend on which other samples are in the run
 
 ## 2. Repository layout
 
@@ -44,6 +45,10 @@ workflow/docker/environment.yaml
 workflow/rules/               common, mapping, qc, bqsr, calling, annotation, chip (.smk)
 workflow/scripts/             make_samplesheet.py, run_batches.py, check_fastq_pair.sh,
                               qc_flags.py, chip_sample.py, chip_cohort.py
+tests/make_fixture.sh         synthetic project (tiny FASTQs, empty resources) for dry runs
+tests/ci_checks.sh            checks run by CI against an image
+.github/workflows/ci.yml      CI on pull requests and pushes to main and release branches
+.github/workflows/release.yml image published to GHCR when a release is published
 ```
 
 Project folder layout (where the workflow is launched): `fastq/` with the
@@ -59,6 +64,8 @@ input FASTQs; outputs split by type (`bam/`, `bqsr/`, `vcf/`, `orientation/`, `m
 - Get the launcher for a new project from the image:
   `docker run --rm hemaclone:<version> cat /opt/hemaclone/workflow/hemaclone.sh > hemaclone.sh`
 - Build: `bash workflow/hemaclone.sh build` (adds the proxy build args when needed)
+- Published images: each GitHub release `vX.Y.Z` builds the image and pushes it to `ghcr.io/kevindelgaudio/hemaclone:X.Y.Z`; the release stops if the tag is not `v` + `VERSION`. The launcher expects the local name, so after pulling: `docker tag ghcr.io/kevindelgaudio/hemaclone:X.Y.Z hemaclone:X.Y.Z`
+- CI: every pull request builds the image (tools layer cached) and runs `tests/ci_checks.sh`: script syntax, launcher dry run and whole-graph dry run on a synthetic project, Snakemake lint (reported, not blocking; the per-rule container lint does not apply, since the whole workflow runs in one image). Nothing is aligned or called, so CI catches broken rules, settings and launcher logic, not wrong results
 
 ## 4. Launching
 
@@ -182,7 +189,7 @@ rerunnable, stops on unknown IDs.
 - **Systematic artefacts pass the filters.** Recurrent indels in low-complexity regions of long genes (KMT2A, KMT2D, BCORL1, CREBBP, SRCAP, ZNF318) and missense calls in GC-rich genes (CEBPA, GATA2, WT1) can clear every criterion, because an external PoN does not contain artefacts specific to one lab or protocol. Signs: many calls concentrated in a few samples, the same genes and positions across unrelated individuals, VAF near the floor, frameshift and in-frame insertions. Candidate filters, discussed but not implemented:
   - exclude indels in simple-repeat or low-complexity regions (RepeatMasker simple repeats, GIAB difficult-regions BED)
   - higher VAF and alt-read thresholds for indels than for SNVs
-  - within-cohort recurrence flag for non-hotspot positions
+  - within-cohort recurrence flag for non-hotspot positions: not adopted, because each sample is classified from its own data only (section 1); recurrent positions stay a review item in `ch_analysis.Rmd`
 - **Optional matched-tumor annotation**, discussed but not implemented: genotype each blood call in the same patient's tumor BAM (Mutect2 `--alleles` or pileup) and compare VAFs. Tumor VAF well above blood VAF suggests tumor-derived; lower or absent suggests CH. Annotation only, never automatic removal; the tumor must not be used as a matched normal, because CH infiltrating the tumor would be removed.
 - IGV review of a few calls per suspicious gene before reporting.
 
@@ -192,3 +199,25 @@ rerunnable, stops on unknown IDs.
 - The 0.35 VAF ceiling and the binomial test exclude heterozygous germline variants by design, so inherited predisposition variants are not assessed.
 - In young or non-elderly cohorts CH is rare; a high CHIP+ rate or dozens of calls per sample point to a technical cause first.
 - Tumor cells in blood DNA at the WES detection limit (about 4% of cells for a heterozygous call at 2% VAF) require extensive marrow involvement.
+
+## 12. Version 1.6.0: scope and decisions
+
+Changes go through `release/1.6.0`, one pull request per change; `VERSION`
+becomes 1.6.0 when the release branch is merged into `main`.
+
+| Area | Decision |
+|---|---|
+| Release process | release branch; pull requests into it do not bump `VERSION` |
+| Infrastructure | `pyyaml` pinned; CI on pull requests; image published to GHCR on release; launcher keeps the local name `hemaclone:X.Y.Z` |
+| Polish | conservative clean-up, outputs identical, checked on a test run |
+| Resources | `hemaclone.sh resources` downloads and indexes the hg38 resources and writes a manifest with sources and checksums; the CH gene panel BED is built from a gene list kept in the repository; exome targets stay user-supplied |
+| Strand bias | new criterion: strand odds ratio (SOR, from `FORMAT/SB`) at most `chip.max_sor` (3); alt reads per strand reported as columns, not filtered |
+| Indels in repeats | stricter VAF and alt-read thresholds for indels in tandem repeats or homopolymers (Mutect2 `STR`/`RPA` and GIAB stratification BEDs), not exclusion; ASXL1 G646 is subject to them, not exempt |
+| Indels | separate VAF and alt-read thresholds for indels and SNVs |
+| Within-cohort recurrence | not implemented: samples are classified independently |
+| Low mappability | not implemented |
+| Gene-specific variant allow-list | deferred to a later version |
+| WGS | `data_type: wes` or `wgs` (flag `--data-type`) switches BQSR intervals and the QC metrics; CH thresholds stay explicit settings, and preflight stops when a WGS run keeps WES-tuned depth and VAF floors |
+| Input | aligned BAM or CRAM accepted, skipping mapping |
+| Sample QC | sex and sample identity check with somalier |
+| Benchmark | after 1.6.0, against the tools in `docs/COMPARATORS.md` |
