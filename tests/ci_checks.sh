@@ -14,6 +14,8 @@
 # 5. Dry run of the whole job graph, cohort steps included
 # 6. Snakemake lint: fails on any lint but the per-rule container lint
 # 7. CHIP classification of a synthetic sample (tests/chip_sample_test.py)
+# 8. WGS mode: a run without explicit CH depth and VAF floors stops; with
+#    them, the dry run plans genome-wide coverage metrics, not capture metrics
 #
 # Nothing is aligned or called: these checks catch broken rules, settings,
 # preflight checks and launcher logic, not wrong results.
@@ -113,5 +115,28 @@ fi
 echo "== 7. CHIP classification"
 docker run --rm -u "$(id -u):$(id -g)" -v "${TESTS_DIR}:/tests:ro" -e HOME=/tmp -w /tmp \
     "$IMAGE" python /tests/chip_sample_test.py "$IMAGE_HOME"
+
+echo "== 8. WGS mode"
+cd "$PROJECT"
+WGS_ARGS=( run --image "$IMAGE" --cores "$CORES" --mem-gb "$MEM_GB" --batch-size 1
+           --resources-dir "$RESOURCES" --tmpdir "$TMP_DIR"
+           --set job_sizes.bwa_map.mem_mb=12000 --set job_sizes.markdup.mem_mb=12000
+           --data-type wgs --dry-run )
+if bash hemaclone.sh "${WGS_ARGS[@]}" > "${WORK}/wgs_unset.txt" 2>&1; then
+    echo "ERROR: a WGS run without ch_filter.min_dp and min_vaf did not stop" >&2
+    exit 1
+fi
+grep -q "a WGS run must set ch_filter.min_dp and ch_filter.min_vaf" "${WORK}/wgs_unset.txt" \
+    || { cat "${WORK}/wgs_unset.txt" >&2; echo "ERROR: unexpected message for an unset WGS run" >&2; exit 1; }
+echo "WGS run without floors stopped as expected."
+bash hemaclone.sh "${WGS_ARGS[@]}" --set ch_filter.min_dp=20 --set ch_filter.min_vaf=0.10 \
+    > "${WORK}/wgs_plan.txt" 2>&1 || { cat "${WORK}/wgs_plan.txt" >&2; exit 1; }
+grep -qE "^wgs_metrics +[0-9]" "${WORK}/wgs_plan.txt" \
+    || { echo "ERROR: the WGS plan has no wgs_metrics job" >&2; exit 1; }
+if grep -qE "^hs_metrics +[0-9]" "${WORK}/wgs_plan.txt"; then
+    echo "ERROR: the WGS plan has hs_metrics jobs" >&2
+    exit 1
+fi
+echo "WGS dry run: wgs_metrics planned, no capture metrics."
 
 echo "All checks passed."

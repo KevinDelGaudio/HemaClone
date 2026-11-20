@@ -32,6 +32,13 @@ machine:
 # Each batch runs to completion before the next starts.
 batch_size: 1
 
+# Sequencing design (flag: --data-type): "wes" or "wgs". WGS fits BQSR on
+# reference.wgs_intervals, writes the recalibrated BAM for the gene panel and
+# the contamination sites only, deletes the duplicate-marked BAM once QC and
+# BQSR are done, and uses CollectWgsMetrics with qc.thresholds_wgs. A WGS run
+# must set ch_filter.min_dp and ch_filter.min_vaf explicitly at launch.
+data_type: "wes"
+
 # Scratch space for sorting and Java temp files (flag: --tmpdir)
 tmpdir: "tmp"
 
@@ -42,6 +49,8 @@ reference:
   dir: "resources"
   fasta: "Homo_sapiens_assembly38.fasta"
   exome_intervals: "exome_targets.hg38.interval_list"
+  # WGS only: BQSR and coverage QC intervals (GATK WGS calling regions)
+  wgs_intervals: "wgs_calling_regions.hg38.interval_list"
   gene_panel_bed: "chip_genes.bed"
   gnomad: "af-only-gnomad.hg38.vcf.gz"
   common_variants: "small_exac_common_3.hg38.vcf.gz"
@@ -178,6 +187,11 @@ qc:
     min_pct_selected: 0.40
     max_pct_dupe: 0.50
     max_dropout: 10.0
+  # data_type wgs: CollectWgsMetrics over reference.wgs_intervals
+  thresholds_wgs:
+    min_mean_coverage: 25
+    min_pct_20x: 0.80
+    max_pct_dupe: 0.30
 
 # Tool parameters. "extra" is appended verbatim to the command line.
 tool_params:
@@ -190,6 +204,9 @@ tool_params:
     extra: ""
   apply_bqsr:
     extra: ""
+    # data_type wgs: bases added around the panel and contamination sites, so
+    # Mutect2 has the reads around its active regions
+    wgs_padding: 150
   mutect2:
     extra: ""
   filter_mutect:
@@ -203,6 +220,10 @@ tool_params:
     min_baseq: 20
   insert_size:
     min_pct: 0.5
+  wgs_metrics:
+    coverage_cap: 250
+    min_mapq: 20
+    min_baseq: 20
 
 # Fraction of a job's memory given to the Java heap (-Xmx)
 java_heap_fraction: 0.85
@@ -232,6 +253,7 @@ job_sizes:
   alignment_summary:       {threads: 1, mem_mb: 8000}
   insert_size:             {threads: 1, mem_mb: 8000}
   hs_metrics:              {threads: 1, mem_mb: 8000}
+  wgs_metrics:             {threads: 1, mem_mb: 8000}
   multiqc:                 {threads: 1, mem_mb: 8000}
   qc_flags:                {threads: 1, mem_mb: 1000}
   chip_sample:             {threads: 1, mem_mb: 2000}

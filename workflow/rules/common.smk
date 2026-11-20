@@ -136,12 +136,22 @@ def vcf_index(path):
     return f"{path}.idx"
 
 
+# Sequencing design: WES fits BQSR on the exome intervals and reports capture
+# metrics; WGS uses the WGS calling regions and genome-wide coverage metrics.
+DATA_TYPE = config["data_type"]
+if DATA_TYPE not in ("wes", "wgs"):
+    raise PreflightError(f"data_type must be 'wes' or 'wgs', got '{DATA_TYPE}'")
+WGS = DATA_TYPE == "wgs"
+BQSR_INTERVALS = REF["wgs_intervals"] if WGS else REF["exome_intervals"]
+COVERAGE_METRICS = "wgs_metrics" if WGS else "hs_metrics"
+log_preflight(f"data type: {DATA_TYPE}")
+
 required_files = {
     "reference FASTA": REF["fasta"],
     "FASTA index": f"{REF['fasta']}.fai",
     "sequence dictionary": f"{os.path.splitext(REF['fasta'])[0]}.dict",
     "bwa-mem2 index": f"{REF['fasta']}.bwt.2bit.64",
-    "exome intervals": REF["exome_intervals"],
+    ("WGS intervals" if WGS else "exome intervals"): BQSR_INTERVALS,
     "gene panel BED": REF["gene_panel_bed"],
     "repeats BED": REF["repeats_bed"],
     "repeats BED index": f"{REF['repeats_bed']}.tbi",
@@ -157,19 +167,20 @@ if not os.path.isdir(REF["funcotator_ds"]):
 fail_if(missing_resources, "Reference resources not found")
 
 # Indel thresholds act on calls that already passed ch_filter.min_vaf and
-# chip.min_alt_reads: a lower value would silently change nothing.
+# chip.min_alt_reads, so the higher of the two applies. A specific threshold
+# below the general one (e.g. the 0.02 indel default under a WGS VAF floor of
+# 0.10) has no effect: noted in the log, not an error.
 CHIP = config["chip"]
-too_low = []
 for key, floor_key, floor in [
         ("indel_min_vaf", "ch_filter.min_vaf", config["ch_filter"]["min_vaf"]),
         ("repeat_indel_min_vaf", "ch_filter.min_vaf", config["ch_filter"]["min_vaf"]),
         ("indel_min_alt_reads", "chip.min_alt_reads", CHIP["min_alt_reads"]),
         ("repeat_indel_min_alt_reads", "chip.min_alt_reads", CHIP["min_alt_reads"])]:
     if CHIP[key] < floor:
-        too_low.append(f"chip.{key} = {CHIP[key]} is below {floor_key} = {floor}")
+        log_preflight(f"NOTE: chip.{key} = {CHIP[key]} is below {floor_key} = {floor}: "
+                      f"{floor_key} applies to these indels")
 if CHIP["max_sor"] <= 0:
-    too_low.append(f"chip.max_sor must be positive, got {CHIP['max_sor']}")
-fail_if(too_low, "Indel and strand thresholds can only be stricter than the general ones")
+    raise PreflightError(f"chip.max_sor must be positive, got {CHIP['max_sor']}")
 
 # ALT and fix-patch contigs need bwa-mem2's ALT contig list (<FASTA>.alt): without
 # it they count as ordinary chromosomes, reads in the regions they duplicate get
@@ -300,6 +311,16 @@ def java_opts(wildcards, resources):
     return f"-Xmx{heap_gb}g -XX:+UseParallelGC -Djava.io.tmpdir={config['tmpdir']}"
 
 
+def apply_bqsr_intervals():
+    """WGS: ApplyBQSR writes only the gene panel and the contamination sites,
+    padded; WES: the whole BAM (no -L)."""
+    if not WGS:
+        return ""
+    padding = TP["apply_bqsr"]["wgs_padding"]
+    return (f" -L {REF['gene_panel_bed']} -L {REF['common_variants']}"
+            f" --interval-padding {padding}")
+
+
 def filtered_vcf(wildcards):
     """FilterMutectCalls output, or its PoN-annotated copy when the PoN is in annotate mode."""
     if PON_ANNOTATE:
@@ -312,7 +333,7 @@ def sample_outputs():
     outputs += expand("maf/{sample}_all.funcotated.maf", sample=SAMPLES)
     outputs += expand("maf/{sample}_ch_final.funcotated.maf", sample=SAMPLES)
     outputs += expand("qc/fastqc/{fq}_fastqc.zip", fq=FASTQ_BY_BASE)
-    for name in ["stats", "alignment_summary_metrics", "insert_size_metrics", "hs_metrics"]:
+    for name in ["stats", "alignment_summary_metrics", "insert_size_metrics", COVERAGE_METRICS]:
         outputs += expand("qc/bam/{sample}.{name}.txt", sample=SAMPLES, name=name)
     outputs += expand("qc/markdup/{sample}.dup_metrics.txt", sample=SAMPLES)
     outputs += expand("chip/samples/{sample}.candidates.tsv", sample=SAMPLES)

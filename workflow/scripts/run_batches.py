@@ -62,6 +62,7 @@ KEYS_WITH_FLAGS = {
     "reference.dir": "--resources-dir",
     "tmpdir": "--tmpdir",
     "fastq_dir": "--fastq-dir",
+    "data_type": "--data-type",
 }
 
 SAMPLESHEET_SCRIPT = os.path.join(WORKFLOW_HOME, "workflow", "scripts", "make_samplesheet.py")
@@ -98,6 +99,9 @@ def parse_args(argv):
     parser.add_argument("--allow-unparsed-headers", action="store_true",
                         help="when building the sheet, accept FASTQs whose first header is not "
                              "Casava 1.8+ (read group falls back to <sample>.<unit>)")
+    parser.add_argument("--data-type", choices=["wes", "wgs"], default=None,
+                        help="sequencing design (default: data_type); wgs needs "
+                             "--set ch_filter.min_dp=... and --set ch_filter.min_vaf=...")
     parser.add_argument("--resources-dir", default=None,
                         help="folder with the reference files (default: reference.dir)")
     parser.add_argument("--tmpdir", default=None,
@@ -347,7 +351,19 @@ def main():
         set_nested(overrides, ["tmpdir"], args.tmpdir)
     if args.fastq_dir:
         set_nested(overrides, ["fastq_dir"], args.fastq_dir)
+    if args.data_type:
+        set_nested(overrides, ["data_type"], args.data_type)
     config = deep_update(copy.deepcopy(base_config), overrides)
+
+    # The CH depth and VAF floors are tuned for WES depth: a WGS run must choose its own
+    if config["data_type"] == "wgs":
+        explicit = overrides.get("ch_filter", {})
+        unset = [f"ch_filter.{key}" for key in ("min_dp", "min_vaf") if key not in explicit]
+        if unset:
+            fail(f"a WGS run must set {' and '.join(unset)} at launch (the defaults, DP >= "
+                 f"{base_config['ch_filter']['min_dp']} and VAF >= {base_config['ch_filter']['min_vaf']}, "
+                 "are tuned for WES depth), e.g. --set ch_filter.min_dp=20 --set ch_filter.min_vaf=0.10 "
+                 "for 30x; see the README for the expected sensitivity")
 
     machine = config["machine"]
     cores = args.cores if args.cores is not None else machine["cores"]
@@ -413,6 +429,7 @@ def main():
     print(f"  workflow     : {version['version']}  [{version['mode']}]  image: {version['image']}")
     print(f"  code from    : {WORKFLOW_HOME}" + (f"  (git {version['git_commit']})" if "git_commit" in version else ""))
     print(f"  sample sheet : {full_sheet}  (FASTQ folder: {fastq_dir})")
+    print(f"  data type    : {config['data_type']}")
     print(f"  samples      : {len(samples)}   batch size: {batch_size}   batches: {len(batches)}")
     print(f"  cores        : {cores}")
     print(f"  RAM          : {mem_gb:g} GB limit, jobs scheduled into {budget_mb / 1024:.0f} GB")
@@ -465,12 +482,14 @@ def main():
     def sheet_rows_of(sample_names):
         return [row for row in rows if row["sample"] in sample_names]
 
+    coverage_metrics = "wgs_metrics" if config["data_type"] == "wgs" else "hs_metrics"
+
     def sample_done(sample):
-        """A sample is finished when its two MAFs and its capture metrics exist."""
+        """A sample is finished when its two MAFs and its coverage metrics exist."""
         return all(os.path.isfile(path) for path in [
             f"maf/{sample}_all.funcotated.maf",
             f"maf/{sample}_ch_final.funcotated.maf",
-            f"qc/bam/{sample}.hs_metrics.txt",
+            f"qc/bam/{sample}.{coverage_metrics}.txt",
         ])
 
     failed = {}     # sample -> reason, over the whole run

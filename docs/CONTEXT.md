@@ -100,8 +100,8 @@ bash hemaclone.sh run --cores 32 --mem-gb 96 --batch-size 1 \
 0. **Resources** (`bash hemaclone.sh resources`, `workflow/scripts/get_resources.py`), once per resources folder: GATK hg38 reference bundle (FASTA, `.fai`, `.dict`, ALT contig list saved as `<FASTA>.alt` for alt-aware bwa-mem2 mapping, dbSNP138, Mills/1000G indels, WGS calling regions) and somatic resources (gnomAD AF-only, small ExAC common sites, 1000 Genomes PoN), each checked against the server's size and MD5; bwa-mem2 index; Funcotator somatic data sources; GIAB tandem repeats and homopolymers BED (kept as downloaded under `giab/`, bgzipped and tabix-indexed as `reference.repeats_bed`); the kit BED (`--targets`) as an interval list; the CH gene panel BED = gene spans of `resources.panel_genes` from the Funcotator GENCODE GTF, intersected with the kit targets, each piece padded by `resources.panel_padding` (50 bp) and merged per gene. Genes missing from the GTF or found at two loci stop the step; genes without kit targets are listed. `MANIFEST.tsv` records source, size, MD5 and date of every file; finished files are skipped on re-runs.
 1. **Sample sheet** built from `fastq/`. Lane-split FASTQs stay separate units with their own read groups; one BAM per sample. Preflight checks: required columns, name characters, duplicated units/read groups/FASTQs, case-only name clashes, missing resources, a reference with ALT or fix-patch contigs but no `<FASTA>.alt` (stops unless `reference_checks.allow_alt_without_index`), PoN files, tools, writable tmpdir, job sizes within the memory budget.
 2. **FASTQ check** per pair: complete gzip decompression, matching read counts and read names in both mates. Truncated pairs fail the sample.
-3. **Mapping**: bwa-mem2 per unit, samtools sort; GATK MarkDuplicates per library after merging units.
-4. **BQSR**: BaseRecalibrator over the exome targets with dbSNP138 and Mills/1000G indels as known sites; ApplyBQSR.
+3. **Mapping**: bwa-mem2 per unit, samtools sort; GATK MarkDuplicates per library after merging units. With `data_type: wgs` the duplicate-marked BAM is temporary: deleted once QC and BQSR have read it.
+4. **BQSR**: BaseRecalibrator with dbSNP138 and Mills/1000G indels as known sites, over the exome targets (WES) or `reference.wgs_intervals` (WGS); ApplyBQSR. In WGS, ApplyBQSR writes only the reads over the gene panel and the `small_exac_common_3` sites, padded by `tool_params.apply_bqsr.wgs_padding` (150 bp): the only regions Mutect2 and the contamination estimate read.
 5. **Calling**: Mutect2 tumor-only on the CHIP gene panel BED, gnomAD AF-only as germline resource, F1R2 collection.
 6. **Artefact models**: LearnReadOrientationModel; GetPileupSummaries and CalculateContamination on `small_exac_common_3`; FilterMutectCalls with orientation priors and contamination table.
 7. **Panel of normals**: `1000g_pon.hg38.vcf.gz` by default. `mode: annotate` adds an INFO/PON flag with bcftools and keeps the calls; `mode: filter` passes the PoN to Mutect2. Never use a PoN built from the cohort being analysed: recurrent CHIP hotspots would be treated as artefacts. Off for one run: `--set pon.vcf=null`.
@@ -109,7 +109,7 @@ bash hemaclone.sh run --cores 32 --mem-gb 96 --batch-size 1 \
 9. **CH genotype filters**: VariantFiltration `DP < min_dp` (LowDP) and `AF < min_vaf` (LowVAF), then SelectVariants `--exclude-filtered --set-filtered-gt-to-nocall --exclude-non-variants`.
 10. **gnomAD annotation**: bcftools `annotate -c INFO/GNOMAD_AF:=INFO/AF` from the local AF-only gnomAD, allele-matched. Funcotator's own gnomAD sources are not used (they ship as unextracted tarballs).
 11. **Funcotator** to MAF (hg38) for two tiers: `_all` (PASS) and `_ch_final` (after the CH filters).
-12. **QC**: FastQC, samtools stats, CollectAlignmentSummaryMetrics, CollectInsertSizeMetrics, CollectHsMetrics (coverage cap 1000, MAPQ and BQ at least 20), MultiQC, `qc/qc_flags.tsv`.
+12. **QC**: FastQC, samtools stats, CollectAlignmentSummaryMetrics, CollectInsertSizeMetrics, CollectHsMetrics (WES; coverage cap 1000, MAPQ and BQ at least 20) or CollectWgsMetrics over `reference.wgs_intervals` (WGS; coverage cap 250), MultiQC, `qc/qc_flags.tsv`.
 13. **CHIP classification**: `chip_sample.py` per sample, `chip_cohort.py` for the cohort tables.
 
 ### Calling intervals
@@ -143,7 +143,7 @@ U2AF1 S34/Q157, IDH1 R132, IDH2 R140/R172, GNB1 K57, KRAS and NRAS G12/G13/Q61.
 - A sample is **CHIP+** with at least one qualifying call in a gene not in `status_exclude_genes` (IL1A, IL1B, IL18, IL33, NLRP3, P2RX7: reported, not counted).
 - **Large clone**: VAF at least 0.10.
 - MAF rows are matched one by one to VCF alleles (Funcotator writes one row per ALT allele in VCF order); a mismatch stops the step.
-- Indel and repeat-indel thresholds act on calls that already passed `ch_filter.min_vaf` and `chip.min_alt_reads`, so they can only be stricter: lower values stop the run at preflight.
+- Indel and repeat-indel thresholds act on calls that already passed `ch_filter.min_vaf` and `chip.min_alt_reads`, so the higher of the two applies; a specific threshold below the general one has no effect, noted in the preflight log (e.g. the indel defaults under a WGS VAF floor of 0.10).
 - Strand counts are one set per VCF site, shared by the alleles of a multi-allelic site. A VCF without `FORMAT/SB` stops the step; without the `INFO/STR` header line, repeats come from the GIAB BED only (logged).
 - An indel's span for the BED lookup: the anchor base, the deleted bases and the next base (where an insertion goes).
 - These filters add to the Mutect2 strand and polymerase-slippage filters that PASS calls already passed.
@@ -162,7 +162,9 @@ U2AF1 S34/Q157, IDH1 R132, IDH2 R140/R172, GNB1 K57, KRAS and NRAS G12/G13/Q61.
 | `contamination/<s>.contamination.table` | CalculateContamination estimate |
 | `qc/multiqc/chip_qc.html`, `qc/qc_flags.tsv` | QC report and per-sample flags |
 
-QC flag thresholds: mean coverage at least 30, at least 80% of target at 20x,
+WGS QC flags (`qc.thresholds_wgs`, columns `mean_coverage`, `pct_20x`, `pct_exc_dupe`, `pct_exc_mapq`, `median_insert_size`, `pct_dup_markdup`): mean coverage at least 25, at least 80% of the calling regions at 20x, duplication at most 30%.
+
+WES QC flag thresholds: mean coverage at least 30, at least 80% of target at 20x,
 at least 40% selected bases, duplication at most 50%, dropout at most 10.
 
 ## 8. Downstream analysis: `ch_analysis.Rmd`
@@ -231,7 +233,7 @@ becomes 1.6.0 when the release branch is merged into `main`.
 | Within-cohort recurrence | not implemented: samples are classified independently |
 | Low mappability | not implemented |
 | Gene-specific variant allow-list | deferred to a later version |
-| WGS | `data_type: wes` or `wgs` (flag `--data-type`) switches BQSR intervals and the QC metrics; CH thresholds stay explicit settings, and preflight stops when a WGS run keeps WES-tuned depth and VAF floors |
+| WGS | `data_type: wes` or `wgs` (flag `--data-type`) switches BQSR intervals and the QC metrics; the recalibrated BAM covers only the panel and the contamination sites; the duplicate-marked BAM is deleted after QC and BQSR; a WGS run must set `ch_filter.min_dp` and `ch_filter.min_vaf` at launch |
 | Input | aligned BAM or CRAM accepted, skipping mapping |
 | Sample QC | sex and sample identity check with somalier |
 | Benchmark | after 1.6.0, against the tools in `docs/COMPARATORS.md` |

@@ -1,6 +1,7 @@
 # =============================================================================
-# QC: FastQC per FASTQ, samtools and Picard metrics per sample BAM,
-# MultiQC report and per-sample threshold flags over the whole sheet.
+# QC: FastQC per FASTQ, samtools and Picard metrics per sample BAM (capture
+# metrics for WES, genome-wide coverage for WGS), MultiQC report and
+# per-sample threshold flags over the whole sheet.
 # =============================================================================
 
 rule fastqc:
@@ -120,13 +121,44 @@ rule hs_metrics:
         " > {log} 2>&1"
 
 
+rule wgs_metrics:
+    input:
+        bam = "bam/{sample}.markdup.bam",
+        bai = "bam/{sample}.markdup.bai",
+    output:
+        "qc/bam/{sample}.wgs_metrics.txt",
+    params:
+        java = java_opts,
+        ref = REF["fasta"],
+        intervals = REF["wgs_intervals"],
+        coverage_cap = TP["wgs_metrics"]["coverage_cap"],
+        min_mapq = TP["wgs_metrics"]["min_mapq"],
+        min_baseq = TP["wgs_metrics"]["min_baseq"],
+    threads: threads_of("wgs_metrics")
+    resources:
+        mem_mb = mem_of("wgs_metrics"),
+    log: "logs/wgs_metrics/{sample}.log"
+    benchmark: "benchmarks/wgs_metrics/{sample}.tsv"
+    shell:
+        "gatk --java-options '{params.java}' CollectWgsMetrics"
+        " -I {input.bam}"
+        " -R {params.ref}"
+        " --INTERVALS {params.intervals}"
+        " -O {output}"
+        " --COVERAGE_CAP {params.coverage_cap}"
+        " --MINIMUM_MAPPING_QUALITY {params.min_mapq}"
+        " --MINIMUM_BASE_QUALITY {params.min_baseq}"
+        " --VALIDATION_STRINGENCY LENIENT"
+        " > {log} 2>&1"
+
+
 rule multiqc:
     input:
         fastqc = expand("qc/fastqc/{fq}_fastqc.zip", fq=FASTQ_BY_BASE),
         samtools = expand("qc/bam/{sample}.stats.txt", sample=SAMPLES),
         alignment = expand("qc/bam/{sample}.alignment_summary_metrics.txt", sample=SAMPLES),
         insert_size = expand("qc/bam/{sample}.insert_size_metrics.txt", sample=SAMPLES),
-        hs = expand("qc/bam/{sample}.hs_metrics.txt", sample=SAMPLES),
+        coverage = expand("qc/bam/{sample}.{metrics}.txt", sample=SAMPLES, metrics=COVERAGE_METRICS),
         dup = expand("qc/markdup/{sample}.dup_metrics.txt", sample=SAMPLES),
         config = MULTIQC_CONFIG,
     output:
@@ -150,14 +182,15 @@ rule multiqc:
 
 rule qc_flags:
     input:
-        hs = expand("qc/bam/{sample}.hs_metrics.txt", sample=SAMPLES),
+        coverage = expand("qc/bam/{sample}.{metrics}.txt", sample=SAMPLES, metrics=COVERAGE_METRICS),
         insert_size = expand("qc/bam/{sample}.insert_size_metrics.txt", sample=SAMPLES),
         dup = expand("qc/markdup/{sample}.dup_metrics.txt", sample=SAMPLES),
     output:
         "qc/qc_flags.tsv",
     params:
         samples = SAMPLES,
-        thresholds = config["qc"]["thresholds"],
+        data_type = DATA_TYPE,
+        thresholds = config["qc"]["thresholds_wgs"] if WGS else config["qc"]["thresholds"],
     threads: threads_of("qc_flags")
     resources:
         mem_mb = mem_of("qc_flags"),
