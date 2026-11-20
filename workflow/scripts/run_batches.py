@@ -5,8 +5,9 @@ as a launch flag.
 
 Each batch runs to completion (alignment through MAFs and per-sample QC)
 before the next batch starts, so no more than N samples are ever in progress.
-After the last batch, the cohort QC report (MultiQC, qc_flags.tsv) is built
-once over the whole sample sheet.
+After the last batch, the cohort step runs once over the whole sample sheet:
+MultiQC, qc_flags.tsv, the somalier relatedness check, the CHIP tables and
+the CH report.
 
 Finished samples are recognised by Snakemake and skipped in seconds, so after
 a failure, fix the cause and re-run the same command to resume.
@@ -319,8 +320,16 @@ def warn_unlisted_fastq(rows, fastq_dir):
 
 def resolved_reference(reference):
     folder = reference["dir"]
-    return {key: (value if key == "dir" or os.path.isabs(value) else os.path.join(folder, value))
+    return {key: (value if key == "dir" or not value or os.path.isabs(value) else os.path.join(folder, value))
             for key, value in reference.items()}
+
+
+def note_missing_report(config):
+    """The report is rendered last: when it fails, the cohort tables are complete."""
+    if config["report"]["enabled"] and not os.path.isfile("reports/ch_report.html"):
+        print("\nCH report not rendered: logs/ch_report/ch_report.log\n"
+              "  The tables in chip/ and qc/ are complete. Fix the cause and run again with --cohort-only.",
+              file=sys.stderr)
 
 
 def resolved_pon(config):
@@ -475,7 +484,10 @@ def main():
     # ---- cohort QC only ----------------------------------------------------------
     if args.cohort_only:
         extra = cohort_extra + (["--dry-run"] if args.dry_run else [])
-        sys.exit(subprocess.run(snakemake_command(["cohort_qc"], full_sheet, extra)).returncode)
+        returncode = subprocess.run(snakemake_command(["cohort_qc"], full_sheet, extra)).returncode
+        if not args.dry_run:
+            note_missing_report(config)
+        sys.exit(returncode)
 
     run_log = f"{run_prefix}.tsv"
     with open(run_log, "w") as handle:
@@ -581,11 +593,7 @@ def main():
 
     print("\n=== cohort QC report ===", flush=True)
     returncode = subprocess.run(snakemake_command(["cohort_qc"], full_sheet, cohort_extra)).returncode
-    # The report is rendered last: when it fails, the cohort tables are complete
-    if config["report"]["enabled"] and not os.path.isfile("reports/ch_report.html"):
-        print("\nCH report not rendered: logs/ch_report/ch_report.log\n"
-              "  The tables in chip/ and qc/ are complete. Fix the cause and run again with --cohort-only.",
-              file=sys.stderr)
+    note_missing_report(config)
     with open(run_log, "a") as handle:
         handle.write(f"cohort\tall\t{'ok' if returncode == 0 else 'failed'}\t-\t-\n")
     print(f"Batch summary: {run_log}")

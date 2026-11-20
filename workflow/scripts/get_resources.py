@@ -209,22 +209,31 @@ def download(url, path, size):
     if done > size:
         os.remove(part)
         done = 0
+    # Interrupted after the last byte, before the rename: nothing left to fetch
+    # (a range request past the end would be refused)
+    if done == size:
+        os.replace(part, path)
+        return
     request = urllib.request.Request(url)
     if done:
         request.add_header("Range", f"bytes={done}-")
-    with urllib.request.urlopen(request, timeout=120) as response:
-        if done and response.status != 206:
-            # The server sent the whole file: start again
-            done = 0
-        with open(part, "ab" if done else "wb") as out:
-            copied = done
-            last_report = 0
-            for block in iter(lambda: response.read(CHUNK), b""):
-                out.write(block)
-                copied += len(block)
-                if copied - last_report >= 1024 ** 3:
-                    print(f"    {copied / 1024 ** 3:.1f} of {size / 1024 ** 3:.1f} GB", flush=True)
-                    last_report = copied
+    try:
+        with urllib.request.urlopen(request, timeout=120) as response:
+            if done and response.status != 206:
+                # The server sent the whole file: start again
+                done = 0
+            with open(part, "ab" if done else "wb") as out:
+                copied = done
+                last_report = 0
+                for block in iter(lambda: response.read(CHUNK), b""):
+                    out.write(block)
+                    copied += len(block)
+                    if copied - last_report >= 1024 ** 3:
+                        print(f"    {copied / 1024 ** 3:.1f} of {size / 1024 ** 3:.1f} GB", flush=True)
+                        last_report = copied
+    except (urllib.error.URLError, OSError) as error:
+        fail(f"download of {url} interrupted: {error}. Re-run the same command: it resumes "
+             f"from {part}")
     os.replace(part, path)
 
 

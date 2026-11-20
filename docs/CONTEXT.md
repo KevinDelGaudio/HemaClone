@@ -209,6 +209,7 @@ runner prints the log path and `--cohort-only` renders it again.
 - 1.4.0: gnomAD criterion was never applied (Funcotator gnomAD tarballs unextracted) and `gnomad_checked` was vacuous. Replaced by bcftools `GNOMAD_AF` from the local AF-only gnomAD, plus a per-sample status file.
 - 1.4.1: samples with zero candidates reported `gnomad_checked = False`. Now read from the VCF header; stop if calls exist but the column is missing.
 - Paired-read name mismatch detected by the FASTQ check (bwa error "paired reads have different names") rather than failing inside bwa.
+- 1.6.0: `.fq.gz` FASTQs rejected by the sample sheet builder; WGS sample names in MultiQC kept the `.wgs_metrics` suffix; an interrupted resources download at its last byte failed instead of completing; a null reference setting gave a Python error instead of a preflight message; a `--settings` file outside the project was not mounted.
 
 ## 10. Known limitations and open items
 

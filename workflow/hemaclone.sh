@@ -16,8 +16,9 @@
 # this script sits in instead, with the tools of the same image.
 #
 # --cores and --mem-gb are hard limits: the container can never use more CPU
-# or RAM than that. The project folder, the FASTQ folder, the resources folder
-# and the tmpdir are mounted automatically; add other host folders with --mount PATH.
+# or RAM than that. The project folder, the FASTQ folder, the resources folder,
+# the tmpdir and the folder of a --settings file are mounted automatically; add
+# other host folders with --mount PATH (e.g. for a file given with --set).
 #
 # Get the launcher for a new project from the image:
 #   docker run --rm hemaclone:<version> cat /opt/hemaclone/workflow/hemaclone.sh > hemaclone.sh
@@ -124,6 +125,7 @@ build_mounts() {
     mkdir -p "$tmp_dir" || die "cannot create tmpdir: $tmp_dir"
 
     MOUNTS=( "$ROOT" "$resources_dir" "$tmp_dir" "${EXTRA_MOUNTS[@]}" )
+    [[ -n "$SETTINGS" ]] && MOUNTS+=( "$(dirname "$(absolute "$SETTINGS")")" )
     [[ -n "$fastq_real" ]] && MOUNTS+=( "$fastq_real" )
     [[ "$MODE" == "dev" ]] && MOUNTS+=( "$CHECKOUT" )
     VOLUME_ARGS=()
@@ -188,7 +190,7 @@ while [[ $# -gt 0 ]]; do
         --resources-dir) [[ $# -ge 2 ]] || die "--resources-dir needs a folder"; RESOURCES_DIR="$2"; RUN_ARGS+=( "$1" "$2" ); shift 2 ;;
         --tmpdir)        [[ $# -ge 2 ]] || die "--tmpdir needs a folder";        TMP_DIR="$2"; RUN_ARGS+=( "$1" "$2" ); shift 2 ;;
         --fastq-dir)     [[ $# -ge 2 ]] || die "--fastq-dir needs a folder";     FASTQ_DIR="$2"; RUN_ARGS+=( "$1" "$2" ); shift 2 ;;
-        --settings)      [[ $# -ge 2 ]] || die "--settings needs a file";        SETTINGS="$2"; RUN_ARGS+=( "$1" "$2" ); shift 2 ;;
+        --settings)      [[ $# -ge 2 ]] || die "--settings needs a file";        SETTINGS="$2"; RUN_ARGS+=( "$1" "$(absolute "$2")" ); shift 2 ;;
         --targets)       [[ $# -ge 2 ]] || die "--targets needs a BED file";     TARGETS="$2"; RUN_ARGS+=( "$1" "$(absolute "$2")" ); shift 2 ;;
         --)              RUN_ARGS+=( "$@" ); break ;;
         *)               RUN_ARGS+=( "$1" ); shift ;;
