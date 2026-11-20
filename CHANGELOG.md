@@ -42,13 +42,21 @@ Changes merged into `release/1.6.0`.
     `in_str`, `in_giab_repeat`, `in_repeat`.
   - `pass_indel`: thresholds for all indels, `chip.indel_min_vaf` and
     `chip.indel_min_alt_reads`, equal to the general ones by default.
-  - Preflight stops thresholds below the general floors, which would do
-    nothing.
+  - A specific indel threshold below the general floor has no effect (the
+    higher applies) and is noted in the preflight log.
 - `chip/chip_filter_counts.tsv`: per criterion, calls failing it and calls
   failing only it.
 - The resources command downloads the GIAB BED (`resources.repeats_url`) and
   saves it bgzipped and indexed; existing resources folders need the command
   run again (it only adds the new file).
+- WGS mode, `--data-type wgs` (`data_type`): BQSR fitted on
+  `reference.wgs_intervals` (GATK WGS calling regions); the recalibrated BAM
+  keeps only the gene panel and the common sites used for contamination,
+  padded by `tool_params.apply_bqsr.wgs_padding` (150); the duplicate-marked
+  BAM is temporary; CollectWgsMetrics replaces CollectHsMetrics, with WGS QC
+  flags and thresholds (`qc.thresholds_wgs`); the exome interval list is not
+  required. A WGS run must set `ch_filter.min_dp` and `ch_filter.min_vaf` at
+  launch. WES runs are unchanged (same planned jobs and commands).
 - `tests/chip_sample_test.py`: classification of a synthetic sample, one call
   per case, run in CI inside the image.
 - CI builds a resources folder from a tiny bundle with the real tools

@@ -90,6 +90,36 @@ bash hemaclone.sh run \
 - `--batch-size N` runs N samples at a time; each batch finishes before the next starts.
 - `--dry-run` shows the planned jobs; `bash hemaclone.sh run --help` lists every flag.
 - Any setting in `config/config.yaml` can be changed with `--set KEY=VALUE`.
+
+### Whole-genome data
+
+Add `--data-type wgs` and choose the CH depth and VAF floors for your depth;
+the run stops without them, because the defaults (DP 100, VAF 0.02) are set
+for exome depth:
+
+```bash
+bash hemaclone.sh run \
+    --cores 32 --mem-gb 96 --batch-size 1 \
+    --resources-dir /path/to/hg38_resources \
+    --tmpdir /path/to/tmp \
+    --data-type wgs \
+    --set ch_filter.min_dp=20 --set ch_filter.min_vaf=0.10
+```
+
+Probability of at least 3 alternate reads (the minimum for a call), by depth
+and VAF:
+
+| Depth | VAF 0.05 | VAF 0.10 | VAF 0.20 |
+|---|---|---|---|
+| 30x | 0.19 | 0.59 | 0.96 |
+| 60x | 0.58 | 0.95 | 1.00 |
+| 100x | 0.88 | 1.00 | 1.00 |
+
+In WGS mode BQSR is fitted on the WGS calling regions, the recalibrated BAM
+keeps only the gene panel and the contamination sites, the duplicate-marked
+BAM is deleted once QC and BQSR are done (about 100 GB per 30x sample), and QC
+uses genome-wide coverage (`qc.thresholds_wgs`). The exome interval list is
+not needed.
 - The settings of every run are recorded in `logs/batches/`.
 
 ## Main outputs

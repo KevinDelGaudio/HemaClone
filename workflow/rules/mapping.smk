@@ -54,9 +54,10 @@ rule markdup:
     input:
         lambda wc: expand("bam/units/{sample}.{unit}.sorted.bam",
                           sample=wc.sample, unit=units_of(wc.sample)),
+    # WGS: deleted once QC and BQSR have read it (about 100 GB per 30x sample)
     output:
-        bam = "bam/{sample}.markdup.bam",
-        bai = "bam/{sample}.markdup.bai",
+        bam = temp("bam/{sample}.markdup.bam") if WGS else "bam/{sample}.markdup.bam",
+        bai = temp("bam/{sample}.markdup.bai") if WGS else "bam/{sample}.markdup.bai",
         metrics = "qc/markdup/{sample}.dup_metrics.txt",
     params:
         inputs = lambda wc, input: " ".join(f"-I {bam}" for bam in input),
