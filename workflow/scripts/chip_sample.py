@@ -23,16 +23,23 @@ def log(handle, text):
     print(text, file=handle, flush=True)
 
 
-def read_maf(path):
+def fail(handle, message):
+    """Write the error to the rule log (Snakemake does not capture a script's
+    stderr there), then stop."""
+    log(handle, f"ERROR: {message}")
+    sys.exit(message)
+
+
+def read_maf(path, log_handle):
     with open(path) as handle:
         lines = [line for line in handle if not line.startswith("#")]
     if not lines:
-        sys.exit(f"MAF without a header line: {path}")
+        fail(log_handle, f"MAF without a header line: {path}")
     header = lines[0].rstrip("\n").split("\t")
     rows = [line.rstrip("\n").split("\t") for line in lines[1:] if line.strip()]
     for row in rows:
         if len(row) != len(header):
-            sys.exit(f"MAF row with {len(row)} fields, header has {len(header)}: {path}")
+            fail(log_handle, f"MAF row with {len(row)} fields, header has {len(header)}: {path}")
     return pd.DataFrame(rows, columns=header, dtype=str)
 
 
@@ -74,38 +81,37 @@ def gnomad_af(value):
     return max(numbers) if numbers else 0.0
 
 
-def main(snakemake):
-    log_handle = open(snakemake.log[0], "w")
+def main(snakemake, log_handle):
     sample = snakemake.wildcards.sample
     chip = snakemake.params.chip
     min_dp = snakemake.params.min_dp
     min_vaf = snakemake.params.min_vaf
     pon_used = snakemake.params.pon_used
 
-    maf = read_maf(snakemake.input.maf)
+    maf = read_maf(snakemake.input.maf, log_handle)
     alleles, gnomad_annotated = read_vcf_alleles(snakemake.input.vcf)
     log(log_handle, f"{sample}: {len(maf)} MAF rows, {len(alleles)} VCF alleles")
 
     # ---- MAF rows <-> VCF alleles, checked one by one ---------------------------
     if len(maf) != len(alleles):
-        sys.exit(f"{sample}: MAF has {len(maf)} rows but the VCF has {len(alleles)} alleles")
+        fail(log_handle, f"{sample}: MAF has {len(maf)} rows but the VCF has {len(alleles)} alleles")
     for i, (chrom, pos, _) in enumerate(alleles):
         maf_chrom, maf_start = maf.at[i, "Chromosome"], int(maf.at[i, "Start_Position"])
         if maf_chrom != chrom or maf_start not in (pos, pos + 1):
-            sys.exit(f"{sample}: MAF row {i + 1} ({maf_chrom}:{maf_start}) does not match "
+            fail(log_handle, f"{sample}: MAF row {i + 1} ({maf_chrom}:{maf_start}) does not match "
                      f"VCF allele {i + 1} ({chrom}:{pos})")
 
     required = ["Hugo_Symbol", "Variant_Classification", "Protein_Change", "t_alt_count", "t_ref_count"]
     missing = [c for c in required if c not in maf.columns]
     if missing:
-        sys.exit(f"{sample}: MAF lacks columns {missing}")
+        fail(log_handle, f"{sample}: MAF lacks columns {missing}")
 
     # gnomAD availability: the annotated VCF header says whether the annotation
     # ran. Funcotator writes no INFO columns for a sample without calls, so an
     # empty MAF lacking GNOMAD_AF is expected; a MAF with calls lacking it is not.
     gnomad_cols = [c for c in maf.columns if GNOMAD_COLUMN.match(c)]
     if gnomad_annotated and len(maf) > 0 and not gnomad_cols:
-        sys.exit(f"{sample}: the VCF carries INFO/GNOMAD_AF but the MAF has no gnomAD column")
+        fail(log_handle, f"{sample}: the VCF carries INFO/GNOMAD_AF but the MAF has no gnomAD column")
     gnomad_checked = gnomad_annotated or bool(gnomad_cols)
     if gnomad_cols:
         log(log_handle, f"gnomAD columns: {', '.join(gnomad_cols)}")
@@ -164,7 +170,7 @@ def main(snakemake):
                     f"(counted for CHIP status: {int(maf['counts_for_status'].sum())})")
     for c in criteria:
         log(log_handle, f"  failing {c}: {int((~maf[c]).sum())}")
-    log_handle.close()
 
 
-main(snakemake)
+with open(snakemake.log[0], "w") as log_handle:
+    main(snakemake, log_handle)

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Run the HemaClone in batches of N samples, with every setting available
+Run HemaClone in batches of N samples, with every setting available
 as a launch flag.
 
 Each batch runs to completion (alignment through MAFs and per-sample QC)
@@ -76,7 +76,7 @@ def parse_args(argv):
 
     parser = argparse.ArgumentParser(
         prog="run",
-        description="Run the HemaClone in batches. Every flag is optional; "
+        description="Run HemaClone in batches. Every flag is optional; "
                     "defaults come from config/config.yaml.",
         epilog='Arguments after "--" are passed to snakemake unchanged '
                "(except cores, resources and config, which have their own flags).")
@@ -143,7 +143,7 @@ def workflow_version():
             version = handle.read().strip()
     info = {"version": version, "code": WORKFLOW_HOME,
             "image": os.environ.get("HEMACLONE_IMAGE", "none (not run through hemaclone.sh)"),
-            "mode": os.environ.get("CHIP_MODE", "direct")}
+            "mode": os.environ.get("HEMACLONE_MODE", "direct")}
     if shutil.which("git"):
         commit = subprocess.run(["git", "-C", WORKFLOW_HOME, "rev-parse", "--short", "HEAD"],
                                 capture_output=True, text=True)
@@ -440,6 +440,19 @@ def main():
 
     cohort_extra = ["--allowed-rules", "multiqc", "qc_flags", "chip_cohort", "cohort_qc"]
 
+    # ---- preflight once, on the whole sheet ----------------------------------------
+    # The checks in common.smk run whenever Snakemake reads the workflow. A failure
+    # there (a missing resource, a bad setting) concerns the run, not one sample:
+    # stop before the first batch instead of marking every sample as failed.
+    print("\n--- Preflight checks on the full sample sheet", flush=True)
+    check = subprocess.run(snakemake_command([], full_sheet, ["--list-rules"]),
+                           capture_output=True, text=True)
+    if check.returncode != 0:
+        print(check.stderr, file=sys.stderr)
+        fail("preflight checks failed, so no batch was started. "
+             "Fix the problem above and re-run the same command.")
+    print("Preflight checks passed.", flush=True)
+
     # ---- cohort QC only ----------------------------------------------------------
     if args.cohort_only:
         extra = cohort_extra + (["--dry-run"] if args.dry_run else [])
@@ -449,7 +462,7 @@ def main():
     with open(run_log, "w") as handle:
         handle.write("batch\tsamples\tstatus\tstarted\tminutes\n")
 
-    def units_of(sample_names):
+    def sheet_rows_of(sample_names):
         return [row for row in rows if row["sample"] in sample_names]
 
     def sample_done(sample):
@@ -474,7 +487,7 @@ def main():
         unfinished = [s for s in batch if not sample_done(s)]
         if unfinished and not args.dry_run:
             check_sheet = os.path.join(BATCH_DIR, f"batch_{number:03d}_check.tsv")
-            check_units = units_of(unfinished)
+            check_units = sheet_rows_of(unfinished)
             write_sheet(check_sheet, fieldnames, check_units)
             targets = [f"qc/fastq_check/{u['sample']}.{u['unit']}.ok" for u in check_units]
             print(f"--- FASTQ check: {len(targets)} pair(s) of {len(unfinished)} unfinished sample(s)", flush=True)
@@ -488,7 +501,7 @@ def main():
         to_run = [s for s in batch if s not in batch_failed]
         if to_run:
             sheet = os.path.join(BATCH_DIR, f"batch_{number:03d}.tsv")
-            write_sheet(sheet, fieldnames, units_of(to_run))
+            write_sheet(sheet, fieldnames, sheet_rows_of(to_run))
             extra = ["--dry-run"] if args.dry_run else []
             returncode = subprocess.run(snakemake_command(["per_sample"], sheet, extra)).returncode
             for sample in to_run:
