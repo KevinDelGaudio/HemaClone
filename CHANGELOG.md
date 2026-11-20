@@ -57,6 +57,17 @@ Changes merged into `release/1.6.0`.
   flags and thresholds (`qc.thresholds_wgs`); the exome interval list is not
   required. A WGS run must set `ch_filter.min_dp` and `ch_filter.min_vaf` at
   launch. WES runs are unchanged (same planned jobs and commands).
+- BAM and CRAM input: `<sample>.bam`/`.cram` in the FASTQ folder become one
+  unit each (sample sheet column `bam`); `bam_check` (samtools quickcheck) in
+  the runner's input check; `bam_remap` re-aligns the read pairs (samtools
+  collate | fastq with original qualities from OQ | bwa-mem2 -p | sort),
+  streamed; CRAM needs `input.cram_reference`. Library from the header; a
+  header SM different from the file name is a warning. FastQC runs on FASTQ
+  units only. FASTQ-only runs unchanged (same planned jobs and commands);
+  sheets without a `bam` column still load.
+- The memory-budget preflight check covers only the jobs a run can use (the
+  BAM/CRAM rules with BAM/CRAM units, the coverage metrics of the data type),
+  so an unused job's size never stops a run.
 - `tests/chip_sample_test.py`: classification of a synthetic sample, one call
   per case, run in CI inside the image.
 - CI builds a resources folder from a tiny bundle with the real tools
