@@ -51,7 +51,8 @@ rule bwa_map:
 
 
 # BAM/CRAM units. Integrity (header and end-of-file marker), checked by the
-# batch runner first, like the FASTQ check.
+# batch runner first, like the FASTQ check. -u: unaligned BAMs, which list no
+# reference sequences, are valid input.
 rule bam_check:
     input:
         lambda wc: unit_row(wc.sample, wc.unit)["bam"],
@@ -63,7 +64,7 @@ rule bam_check:
     log: "logs/bam_check/{sample}.{unit}.log"
     benchmark: "benchmarks/bam_check/{sample}.{unit}.tsv"
     shell:
-        "( samtools quickcheck -v {input} && touch {output} ) > {log} 2>&1"
+        "( samtools quickcheck -v -u {input} && touch {output} ) > {log} 2>&1"
 
 
 # Re-alignment of a BAM/CRAM unit, streamed: reads grouped by name, written
