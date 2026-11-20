@@ -168,15 +168,17 @@ not needed.
 | `chip/chip_filter_counts.tsv` | per criterion: calls failing it, and calls failing only it |
 | `qc/multiqc/chip_qc.html`, `qc/qc_flags.tsv` | QC report and per-sample flags, sex and identity check included |
 | `qc/somalier/relate.html` | somalier relatedness and sex report |
-| `reports/ch_report.html` | CH report (maftools): methods with the thresholds applied, filtering, VAF, recurrent positions, oncoplot, lollipop plots |
-| `reports/results/*.csv` | tables of the CH report: samples, calls, recurrent positions, filter summary |
+| `reports/ch_report.html` | CH report (maftools): methods with the thresholds applied, filtering, strand bias, indels in repeats, calls per sample, VAF, recurrent positions, oncoplot, lollipop plots |
+| `reports/qc_report.html` | QC report: coverage against the CH depth floor, breadth, duplicates, insert size, contamination, sex and relatedness, input type |
+| `reports/methods_report.html` | methods record: workflow version and command, tool versions, reference files with sources and MD5, every setting |
+| `reports/results/*.csv` | tables of the reports |
 
 ## Report
 
-The CH report is rendered at the end of a run, once every sample has
-finished, with R from its own environment in the image. To render it again,
-for example after excluding samples, run the same command with
-`--cohort-only`:
+Three reports are rendered at the end of a run, once every sample has
+finished, with R from its own environment in the image: the CH report, the QC
+report and the methods record. To render them again, for example after
+excluding samples, run the same command with `--cohort-only`:
 
 ```bash
 bash hemaclone.sh run \
@@ -191,19 +193,22 @@ bash hemaclone.sh run \
 - Paths are read inside the container: relative paths start from the project
   folder; a file elsewhere needs its folder added with `--mount`.
 - `report.exclude_samples`: a file of sample IDs, one per line (`#` starts a
-  comment), left out of the report and its CSV tables. The tables in `chip/`
-  keep every sample; the report names the samples it leaves out.
-- `report.ch_rmd`: render your own version of the report. Copy the built-in
-  one out of the image, edit it, and pass its path:
+  comment), left out of the CH report and its CSV tables and marked in the QC
+  report. The tables in `chip/` keep every sample; the CH report names the
+  samples it leaves out.
+- `report.ch_rmd`, `report.qc_rmd`, `report.methods_rmd`: render your own
+  version of a report. Copy the built-in one out of the image, edit it, and
+  pass its path:
 
   ```bash
   docker run --rm hemaclone:1.6.0 cat /opt/hemaclone/workflow/report/ch_report.Rmd > my_ch_report.Rmd
   ```
 
   then add `--set report.ch_rmd=my_ch_report.Rmd` to the command.
-- `report.enabled=false` skips the report.
-- If the report fails, the run says so and points to
-  `logs/ch_report/ch_report.log`; every other output is complete.
+  (`qc_report.Rmd` and `methods_report.Rmd` the same way).
+- `report.enabled=false` skips the reports.
+- If a report fails, the run says so and points to its log in `logs/`;
+  every other output is complete.
 
 ## Interpretation
 

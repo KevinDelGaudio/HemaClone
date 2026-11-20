@@ -87,6 +87,19 @@ Changes merged into `release/1.6.0`.
   keeps every sample). A failed render leaves the other outputs in place and
   is reported by the runner. `tests/report_test.py` renders it in CI on a
   synthetic cohort.
+- QC report (`reports/qc_report.html`, rule `qc_report`): coverage against
+  `ch_filter.min_dp`, breadth, duplicates, insert size, contamination, X and Y
+  depth ratios, pairwise relatedness and input type for every sample, excluded
+  samples marked; tables `reports/results/qc_summary.csv` and
+  `qc_related_pairs.csv`.
+- Methods record (`reports/methods_report.html`, rules `tool_versions` and
+  `methods_report`): workflow version and command, pinned and installed
+  versions of every package in the image, R package versions, the resources
+  manifest with sources and MD5, the reference files used, every setting.
+- CH report: sections on strand bias (SOR), indels in repeats and calls per
+  sample; the methods text covers BAM/CRAM input, the data type and the
+  strand-bias, indel and repeat-indel criteria with their thresholds.
+- `report.qc_rmd` and `report.methods_rmd`, as `report.ch_rmd`.
 - `tests/chip_sample_test.py`: classification of a synthetic sample, one call
   per case, run in CI inside the image.
 - CI builds a resources folder from a tiny bundle with the real tools

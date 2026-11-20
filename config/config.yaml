@@ -39,13 +39,16 @@ input:
   cram_reference: null
 
 # Reports rendered once the cohort is complete, into reports/ (HTML) and
-# reports/results/ (CSV). ch_rmd: null = the report shipped with the workflow
-# (workflow/report/ch_report.Rmd); a path = your own copy of it. exclude_samples:
-# a file of sample IDs (one per line) left out of the reports only; chip/
-# keeps every sample.
+# reports/results/ (CSV): the CH report, the QC report and the methods record.
+# *_rmd: null = the report shipped with the workflow (workflow/report/); a
+# path = your own copy of it. exclude_samples: a file of sample IDs (one per
+# line) left out of the CH report and marked in the QC report; chip/ keeps
+# every sample.
 report:
   enabled: true
   ch_rmd: null
+  qc_rmd: null
+  methods_rmd: null
   exclude_samples: null
 
 # Sequencing design (flag: --data-type): "wes" or "wgs". WGS fits BQSR on
@@ -299,6 +302,9 @@ job_sizes:
   somalier_extract:        {threads: 1, mem_mb: 2000}
   somalier_relate:         {threads: 1, mem_mb: 4000}
   ch_report:               {threads: 1, mem_mb: 4000}
+  qc_report:               {threads: 1, mem_mb: 4000}
+  tool_versions:           {threads: 1, mem_mb: 1000}
+  methods_report:          {threads: 1, mem_mb: 2000}
   multiqc:                 {threads: 1, mem_mb: 8000}
   qc_flags:                {threads: 1, mem_mb: 1000}
   chip_sample:             {threads: 1, mem_mb: 2000}

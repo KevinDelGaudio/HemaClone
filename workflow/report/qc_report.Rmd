@@ -1,0 +1,274 @@
+---
+title: "Sample Quality Control"
+author: "HemaClone `r params$workflow_version`"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    number_sections: true
+params:
+  project_dir: ""
+  results_dir: "results"
+  exclude_samples: ""
+  workflow_version: ""
+---
+
+# Overview
+
+Per-sample quality of the alignments and of the sample identity, read from
+the workflow's QC outputs. A call in a sample that fails here is reviewed for
+a technical cause first: low or uneven coverage, contamination, a library
+with many duplicates, or a sample swap. Every sample of the run is shown,
+including those left out of the CH report (marked as excluded).
+
+```{r setup, include=FALSE}
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(yaml)
+
+# Rendered by the qc_report step of the workflow (workflow/scripts/render_report.R),
+# with the project folder holding qc/, contamination/ and logs/.
+PROJECT_DIR <- params$project_dir
+RESULTS_DIR <- params$results_dir
+
+if (!nzchar(PROJECT_DIR) || !dir.exists(file.path(PROJECT_DIR, "qc"))) {
+  stop("Set project_dir to the project folder holding qc/: ", PROJECT_DIR)
+}
+
+knitr::opts_knit$set(root.dir = PROJECT_DIR)
+knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = FALSE)
+```
+
+```{r inputs}
+n_report <- function(df, label) {
+  message(sprintf("%-40s n = %d", label, nrow(df)))
+  df
+}
+
+# Most recent real run (not a dry run) whose settings carry a qc block
+settings_files <- sort(list.files("logs/batches", pattern = "^run_.*_settings\\.yaml$",
+                                  full.names = TRUE))
+settings_list <- lapply(settings_files, yaml::read_yaml)
+usable <- vapply(settings_list,
+                 function(s) !is.null(s$qc) && !isTRUE(s$run$dry_run),
+                 logical(1))
+if (!any(usable)) stop("No run settings with a qc block in logs/batches/")
+settings <- settings_list[[max(which(usable))]]
+
+wgs <- identical(settings$data_type, "wgs")
+thr <- if (wgs) settings$qc$thresholds_wgs else settings$qc$thresholds
+min_dp <- settings$ch_filter$min_dp
+
+flags <- read.delim("qc/qc_flags.tsv", stringsAsFactors = FALSE, check.names = FALSE,
+                    na.strings = c("NA", "")) %>%
+  n_report("samples in qc_flags.tsv")
+
+# Coverage columns differ between exome and genome metrics
+coverage_col <- if (wgs) "mean_coverage" else "mean_target_coverage"
+breadth_col  <- if (wgs) "pct_20x" else "pct_target_20x"
+coverage_min <- thr$min_mean_coverage
+breadth_min  <- if (wgs) thr$min_pct_20x else thr$min_pct_target_20x
+
+# Samples left out of the reports (report.exclude_samples): marked, not removed
+excluded <- character(0)
+if (nzchar(params$exclude_samples)) {
+  ids <- trimws(sub("#.*$", "", readLines(params$exclude_samples, warn = FALSE)))
+  excluded <- unique(ids[nzchar(ids)])
+}
+flags$excluded <- flags$sample %in% excluded
+
+# Contamination estimate per sample (GATK CalculateContamination)
+contamination <- do.call(rbind, lapply(flags$sample, function(s) {
+  path <- file.path("contamination", paste0(s, ".contamination.table"))
+  if (!file.exists(path)) stop("Contamination table not found: ", path)
+  table <- read.delim(path, stringsAsFactors = FALSE)
+  data.frame(sample = s, contamination = table$contamination[1], contamination_error = table$error[1])
+})) %>% n_report("contamination tables")
+
+# Input type per sample, from the sample sheet of the run
+sheet <- read.delim(settings$samples, stringsAsFactors = FALSE, colClasses = "character")
+if (!"bam" %in% names(sheet)) sheet$bam <- ""
+input <- sheet %>%
+  dplyr::mutate(input = dplyr::case_when(
+    grepl("\\.cram$", bam) ~ "CRAM",
+    grepl("\\.bam$", bam)  ~ "BAM",
+    TRUE                   ~ "FASTQ")) %>%
+  dplyr::group_by(sample) %>%
+  dplyr::summarise(input = paste(sort(unique(input)), collapse = "+"), units = dplyr::n(),
+                   .groups = "drop")
+
+qc <- flags %>%
+  dplyr::left_join(contamination, by = "sample") %>%
+  dplyr::left_join(input, by = "sample")
+
+missing_input <- qc$sample[is.na(qc$input)]
+if (length(missing_input) > 0) {
+  stop("Samples in qc_flags.tsv but not in the sample sheet ", settings$samples, ": ",
+       paste(missing_input, collapse = ", "))
+}
+
+# One point per sample, ordered by value; names shown for small cohorts only
+sample_plot <- function(df, column, x_label, lines = NULL) {
+  df <- df[!is.na(df[[column]]), , drop = FALSE]
+  df$sample <- factor(df$sample, levels = df$sample[order(df[[column]])])
+  plot <- ggplot(df, aes(x = .data[[column]], y = sample, colour = status, shape = excluded)) +
+    geom_point(size = 2) +
+    scale_colour_manual(values = c(PASS = "#2171B5", FLAG = "#B2182B")) +
+    scale_shape_manual(values = c("FALSE" = 16, "TRUE" = 4), labels = c("FALSE" = "included", "TRUE" = "excluded")) +
+    theme_classic() +
+    labs(x = x_label, y = NULL, colour = NULL, shape = NULL)
+  for (line in lines) plot <- plot + geom_vline(xintercept = line$x, linetype = line$type)
+  if (nrow(df) > 60) plot <- plot + theme(axis.text.y = element_blank(), axis.ticks.y = element_blank())
+  plot
+}
+plot_height <- min(12, max(3, nrow(qc) * 0.15))
+```
+
+## Summary
+
+```{r summary}
+data.frame(
+  samples       = nrow(qc),
+  PASS          = sum(qc$status == "PASS"),
+  FLAG          = sum(qc$status == "FLAG"),
+  excluded      = sum(qc$excluded),
+  data_type     = if (wgs) "WGS" else "WES"
+)
+
+flag_counts <- qc %>%
+  dplyr::filter(flags != "-") %>%
+  tidyr::separate_rows(flags, sep = ";") %>%
+  dplyr::count(flags, name = "samples") %>%
+  dplyr::arrange(dplyr::desc(samples))
+if (nrow(flag_counts) == 0) message("No sample is flagged.")
+flag_counts
+
+qc %>%
+  dplyr::filter(status == "FLAG" | excluded) %>%
+  dplyr::select(sample, flags, excluded, dplyr::all_of(c(coverage_col, breadth_col)), contamination)
+```
+
+## Input
+
+```{r input}
+qc %>% dplyr::count(input, units, name = "samples")
+```
+
+# Coverage
+
+Calls need a depth of at least `r min_dp` (`ch_filter.min_dp`) at their
+position. A sample whose mean coverage is near or below that depth has little
+of the panel callable, so its negative status says little. The dashed line
+marks `ch_filter.min_dp`, the dotted line the QC coverage threshold
+(`r coverage_min`).
+
+```{r coverage, fig.width=8, fig.height=plot_height}
+sample_plot(qc, coverage_col, if (wgs) "Mean coverage" else "Mean target coverage",
+            list(list(x = min_dp, type = "dashed"), list(x = coverage_min, type = "dotted")))
+```
+
+Fraction of the `r if (wgs) "calling regions" else "capture targets"` covered
+at 20x or more; the dotted line is the QC threshold (`r breadth_min`).
+
+```{r breadth, fig.width=8, fig.height=plot_height}
+sample_plot(qc, breadth_col, "Fraction at 20x or more", list(list(x = breadth_min, type = "dotted")))
+```
+
+# Library
+
+Fraction of bases excluded from coverage as duplicates, the value the QC
+flag uses (dotted line: `r thr$max_pct_dupe`); a high fraction means fewer
+independent molecules than the depth suggests. The duplicate rate of all reads
+from MarkDuplicates is in the exported table (`pct_dup_markdup`).
+
+```{r duplication, fig.width=8, fig.height=plot_height}
+sample_plot(qc, "pct_exc_dupe", "Duplicate fraction excluded from coverage",
+            list(list(x = thr$max_pct_dupe, type = "dotted")))
+```
+
+Median insert size: an outlier can point to degraded DNA or a different
+library protocol.
+
+```{r insert_size, fig.width=8, fig.height=plot_height}
+sample_plot(qc, "median_insert_size", "Median insert size (bp)")
+```
+
+# Contamination
+
+Fraction of reads from another individual, estimated by CalculateContamination
+at common variant sites and passed to FilterMutectCalls. Contamination adds
+low-VAF calls that look like small clones, so calls in a contaminated sample
+are reviewed before they are read as CH. The workflow sets no threshold here.
+
+```{r contamination, fig.width=8, fig.height=plot_height}
+sample_plot(qc, "contamination", "Estimated contamination")
+qc %>%
+  dplyr::select(sample, contamination, contamination_error) %>%
+  dplyr::arrange(dplyr::desc(contamination)) %>%
+  head(10)
+```
+
+# Sex and identity
+
+Mean depth on chromosomes X and Y at the somalier sites, relative to the
+autosomes. Male and female samples form two clusters on the Y ratio.
+`r if (is.null(settings$qc$sex_y_ratio_male)) "No sex is inferred until qc.sex_y_ratio_male is set: choose a value between the two clusters below." else paste0("Samples with a Y ratio of at least ", settings$qc$sex_y_ratio_male, " (qc.sex_y_ratio_male, dashed line) are called male.")`
+
+```{r sex, fig.width=7, fig.height=5}
+sex_plot <- ggplot(qc, aes(x = x_depth_ratio, y = y_depth_ratio, colour = inferred_sex)) +
+  geom_point(size = 2) +
+  theme_classic() +
+  labs(x = "X / autosome depth", y = "Y / autosome depth", colour = "inferred sex")
+if (!is.null(settings$qc$sex_y_ratio_male)) {
+  sex_plot <- sex_plot + geom_hline(yintercept = settings$qc$sex_y_ratio_male, linetype = "dashed")
+}
+sex_plot
+qc %>% dplyr::filter(grepl("SEX_MISMATCH", flags)) %>% dplyr::select(sample, inferred_sex, y_depth_ratio)
+```
+
+Relatedness between every pair of samples. Unrelated individuals sit near 0,
+first-degree relatives near 0.5, and two samples from the same individual
+near 1: a duplicate or a sample swap. Pairs at or above
+`r settings$qc$min_relatedness_list` (`qc.min_relatedness_list`) are listed;
+pairs at or above `r settings$qc$min_relatedness_flag` are flagged
+POSSIBLE_DUPLICATE.
+
+```{r relatedness, fig.width=8, fig.height=4}
+pairs <- read.delim("qc/somalier/relate.pairs.tsv", stringsAsFactors = FALSE, check.names = FALSE)
+names(pairs) <- sub("^#", "", names(pairs))
+pairs <- n_report(pairs, "sample pairs")
+if (nrow(pairs) == 0) {
+  message("A single sample: no pairs.")
+} else {
+  print(
+    ggplot(pairs, aes(x = relatedness)) +
+      geom_histogram(bins = 50, fill = "grey60") +
+      geom_vline(xintercept = settings$qc$min_relatedness_list, linetype = "dotted") +
+      geom_vline(xintercept = settings$qc$min_relatedness_flag, linetype = "dashed") +
+      theme_classic() +
+      labs(x = "Relatedness", y = "Sample pairs")
+  )
+}
+related <- pairs %>%
+  dplyr::filter(relatedness >= settings$qc$min_relatedness_list) %>%
+  dplyr::select(sample_a, sample_b, relatedness, dplyr::any_of(c("ibs0", "ibs2", "n"))) %>%
+  dplyr::arrange(dplyr::desc(relatedness))
+if (nrow(related) == 0) message("No pair at or above ", settings$qc$min_relatedness_list, ".")
+related
+```
+
+# Export
+
+```{r export}
+dir.create(RESULTS_DIR, showWarnings = FALSE, recursive = TRUE)
+write.csv(qc,      file.path(RESULTS_DIR, "qc_summary.csv"),        row.names = FALSE)
+write.csv(related, file.path(RESULTS_DIR, "qc_related_pairs.csv"), row.names = FALSE)
+```
+
+# Session Info
+
+```{r session}
+sessionInfo()
+```

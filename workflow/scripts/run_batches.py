@@ -325,11 +325,14 @@ def resolved_reference(reference):
 
 
 def note_missing_report(config):
-    """The report is rendered last: when it fails, the cohort tables are complete."""
-    if config["report"]["enabled"] and not os.path.isfile("reports/ch_report.html"):
-        print("\nCH report not rendered: logs/ch_report/ch_report.log\n"
-              "  The tables in chip/ and qc/ are complete. Fix the cause and run again with --cohort-only.",
-              file=sys.stderr)
+    """Reports are rendered last: when one fails, the cohort tables are complete."""
+    if not config["report"]["enabled"]:
+        return
+    for name in ["ch_report", "qc_report", "methods_report"]:
+        if not os.path.isfile(f"reports/{name}.html"):
+            print(f"\nReport not rendered: reports/{name}.html (log: logs/{name}/{name}.log)\n"
+                  "  The tables in chip/ and qc/ are complete. Fix the cause and run again with --cohort-only.",
+                  file=sys.stderr)
 
 
 def resolved_pon(config):
@@ -466,7 +469,7 @@ def main():
         return command
 
     cohort_extra = ["--allowed-rules", "multiqc", "qc_flags", "chip_cohort", "somalier_relate",
-                    "ch_report", "cohort_qc"]
+                    "ch_report", "qc_report", "tool_versions", "methods_report", "cohort_qc"]
 
     # ---- preflight once, on the whole sheet ----------------------------------------
     # The checks in common.smk run whenever Snakemake reads the workflow. A failure

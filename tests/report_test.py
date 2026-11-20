@@ -1,15 +1,19 @@
 #!/usr/bin/env python3
 """
-Test of the CH report on a synthetic cohort, run in CI inside the image:
+Test of the three reports on a synthetic cohort, run in CI inside the image:
 
   python tests/report_test.py [WORKFLOW_HOME]   (default /opt/hemaclone)
 
 Four samples are classified by chip_sample.py and chip_cohort.py, as in a real
 run: P1 and P2 with qualifying calls, N1 with a strand-biased call only, and X1
-with a qualifying call, listed for exclusion. The report is then rendered with
-the R environment of the image (render_report.R). Checked: the HTML and the
-four CSV exports exist, X1 is left out of the exports and named in the report,
-and the report carries the workflow version.
+with a qualifying call, listed for exclusion. QC tables (qc_flags.tsv,
+contamination, somalier pairs), a sample sheet and a resources manifest are
+written as the workflow writes them, and tool_versions.py runs as in a run.
+The reports are then rendered with the R environment of the image
+(render_report.R). Checked: every HTML and CSV export exists; X1 is left out of
+the CH exports, named in the CH report and marked excluded in the QC summary;
+the reports carry the workflow version; the methods record lists the settings
+and finds the reference files in the manifest.
 """
 
 import csv
@@ -94,7 +98,8 @@ def main():
 
     project = tempfile.mkdtemp()
     os.chdir(project)
-    for folder in ["work", "chip/samples", "logs/batches", "logs/chip_cohort"]:
+    for folder in ["work", "chip/samples", "logs/batches", "logs/chip_cohort", "qc/somalier",
+                   "contamination", "config", "resources", "reports/results"]:
         os.makedirs(folder, exist_ok=True)
 
     # Empty repeats BED: no call is in a GIAB repeat
@@ -133,10 +138,72 @@ def main():
     check(status == {"P1": "CHIP+", "P2": "CHIP+", "N1": "CHIP-", "X1": "CHIP+"},
           f"cohort classified: {status}")
 
+    # ---- QC outputs, sample sheet and resources manifest, as the workflow writes them
+    sheet_columns = ["sample", "unit", "fq1", "fq2", "flowcell", "lane", "barcode",
+                     "rg_id", "rg_pu", "lb", "pattern", "bam"]
+    with open("config/samples.tsv", "w") as handle:
+        handle.write("\t".join(sheet_columns) + "\n")
+        for sample in samples:
+            if sample == "N1":
+                row = [sample, "B1", "", "", "NA", "NA", "NA", f"{sample}.B1", f"{sample}.B1",
+                       f"{sample}_lib1", "cram", f"fastq/{sample}.cram"]
+            else:
+                row = [sample, "U1", f"fastq/{sample}_R1.fastq.gz", f"fastq/{sample}_R2.fastq.gz",
+                       "FC1", "1", "NA", "FC1.1", "FC1.1.NA", f"{sample}_lib1", "plain", ""]
+            handle.write("\t".join(row) + "\n")
+
+    flag_columns = ["sample", "mean_target_coverage", "pct_target_20x", "pct_target_50x",
+                    "pct_selected_bases", "fold_enrichment", "pct_exc_dupe", "at_dropout",
+                    "gc_dropout", "median_insert_size", "pct_dup_markdup", "x_depth_ratio",
+                    "y_depth_ratio", "inferred_sex", "related_samples", "status", "flags"]
+    qc_values = {
+        "P1": ["150", "0.97", "0.90", "0.70", "40", "0.10", "1.2", "0.8", "210", "0.12", "1.01", "0.002",
+               "NA", "-", "PASS", "-"],
+        "P2": ["140", "0.96", "0.88", "0.71", "41", "0.11", "1.1", "0.9", "205", "0.13", "0.52", "0.48",
+               "NA", "X1:0.98", "FLAG", "POSSIBLE_DUPLICATE"],
+        "N1": ["25", "0.60", "0.20", "0.69", "39", "0.55", "1.5", "1.2", "180", "0.58", "1.00", "0.001",
+               "NA", "-", "FLAG", "LOW_COVERAGE;LOW_20X_BREADTH;HIGH_DUPLICATION"],
+        "X1": ["138", "0.95", "0.87", "0.70", "40", "0.11", "1.1", "0.9", "206", "0.12", "0.51", "0.47",
+               "NA", "P2:0.98", "FLAG", "POSSIBLE_DUPLICATE"],
+    }
+    with open("qc/qc_flags.tsv", "w") as handle:
+        handle.write("\t".join(flag_columns) + "\n")
+        for sample in samples:
+            handle.write("\t".join([sample] + qc_values[sample]) + "\n")
+    for sample, fraction in zip(samples, ["0.001", "0.002", "0.031", "0.002"]):
+        with open(f"contamination/{sample}.contamination.table", "w") as handle:
+            handle.write(f"sample\tcontamination\terror\n{sample}\t{fraction}\t0.0005\n")
+    with open("qc/somalier/relate.pairs.tsv", "w") as handle:
+        handle.write("#sample_a\tsample_b\trelatedness\tibs0\tibs2\tn\n")
+        for a, b, value in [("P1", "P2", "0.01"), ("P1", "N1", "-0.02"), ("P1", "X1", "0.02"),
+                            ("P2", "N1", "0.00"), ("P2", "X1", "0.98"), ("N1", "X1", "0.01")]:
+            handle.write(f"{a}\t{b}\t{value}\t10\t500\t2000\n")
+
+    resources = os.path.join(project, "resources")
+    with open(os.path.join(resources, "MANIFEST.tsv"), "w") as handle:
+        handle.write("file\tsource\tbytes\tmd5\tdate\n")
+        handle.write(f"{config['reference']['fasta']}\thttps://example.org/{config['reference']['fasta']}"
+                     "\t100\t0123456789abcdef0123456789abcdef\t2026-01-01 00:00\n")
+
+    tools = types.SimpleNamespace(
+        output=["reports/results/tool_versions.tsv"], log=["work/tool_versions.log"],
+        params=types.SimpleNamespace(docker_dir=os.path.join(HOME, "workflow", "docker")))
+    run_script("tool_versions.py", tools)
+    tool_rows = list(csv.DictReader(open("reports/results/tool_versions.tsv"), delimiter="\t"))
+    check(any(r["package"] == "bioconductor-maftools" for r in tool_rows),
+          f"tool_versions.tsv lists the pinned packages ({len(tool_rows)})")
+
     # ---- settings recorded by the run, as run_batches.py writes them -------------
-    settings = {"workflow": {"version": version, "mode": "image", "image": f"hemaclone:{version}"}}
+    settings = {"workflow": {"version": version, "mode": "image", "image": f"hemaclone:{version}",
+                             "code": HOME}}
     settings.update(config)
     settings["ch_filter"] = dict(config["ch_filter"], min_dp=100, min_vaf=0.02)
+    settings["reference"] = dict(config["reference"], dir=resources)
+    settings["samples"] = "config/samples.tsv"
+    settings["machine"] = {"cores": 4, "mem_gb": 16, "schedule_mb": 14745}
+    settings["reference_resolved"] = {k: (v if k == "dir" else os.path.join(resources, v))
+                                      for k, v in settings["reference"].items()}
+    settings["pon_resolved"] = os.path.join(resources, config["pon"]["vcf"])
     settings["run"] = {"command": "test", "only": None, "dry_run": False, "snakemake_extra": []}
     with open("logs/batches/run_20000101_000000_settings.yaml", "w") as handle:
         yaml.safe_dump(settings, handle, sort_keys=False)
@@ -145,16 +212,17 @@ def main():
         handle.write("# left out of the report\n" + "\n".join(EXCLUDED) + "\n")
 
     # ---- render ------------------------------------------------------------------
-    command = [config["tools"]["rscript"], os.path.join(SCRIPTS, "render_report.R"),
-               os.path.join(HOME, "workflow", "report", "ch_report.Rmd"),
-               "reports/ch_report.html", "reports/results", "work/report_tmp", "work/exclude.txt"]
-    os.makedirs("reports", exist_ok=True)
-    result = subprocess.run(command, capture_output=True, text=True)
-    if result.returncode != 0:
-        sys.exit(f"FAIL: report not rendered:\n{result.stdout}\n{result.stderr}")
+    for name in ["ch_report", "qc_report", "methods_report"]:
+        command = [config["tools"]["rscript"], os.path.join(SCRIPTS, "render_report.R"),
+                   os.path.join(HOME, "workflow", "report", f"{name}.Rmd"),
+                   f"reports/{name}.html", "reports/results", f"work/{name}_tmp", "work/exclude.txt"]
+        result = subprocess.run(command, capture_output=True, text=True)
+        if result.returncode != 0:
+            sys.exit(f"FAIL: {name} not rendered:\n{result.stdout}\n{result.stderr}")
+        check(os.path.getsize(f"reports/{name}.html") > 0, f"reports/{name}.html written")
 
-    check(os.path.getsize("reports/ch_report.html") > 0, "reports/ch_report.html written")
-    exports = ["ch_samples", "ch_calls", "ch_recurrent_positions", "ch_filter_summary"]
+    exports = ["ch_samples", "ch_calls", "ch_recurrent_positions", "ch_filter_summary",
+               "qc_summary", "qc_related_pairs", "methods_run", "methods_references", "methods_settings"]
     for name in exports:
         check(os.path.isfile(f"reports/results/{name}.csv"), f"reports/results/{name}.csv written")
 
@@ -170,6 +238,23 @@ def main():
     check(f"HemaClone {version}" in html, f"report carries the workflow version {version}")
     check(os.path.isfile(os.path.join(project, "chip", "chip_samples.tsv")) and
           "X1" in open("chip/chip_samples.tsv").read(), "chip/ tables keep the excluded sample")
+
+    summary = {row["sample"]: row for row in read_csv("reports/results/qc_summary.csv")}
+    check(sorted(summary) == sorted(samples), "QC summary keeps every sample")
+    check(summary["X1"]["excluded"] == "TRUE" and summary["P1"]["excluded"] == "FALSE",
+          "QC summary marks the excluded sample")
+    check(summary["N1"]["input"] == "CRAM" and summary["P1"]["input"] == "FASTQ", "QC summary: input type")
+    pairs = read_csv("reports/results/qc_related_pairs.csv")
+    check(len(pairs) == 1 and {pairs[0]["sample_a"], pairs[0]["sample_b"]} == {"P2", "X1"},
+          "related pairs: P2 and X1 only")
+    for name in ["qc_report", "methods_report"]:
+        check(f"HemaClone {version}" in open(f"reports/{name}.html").read(), f"{name} carries the version")
+    settings_rows = {row["setting"]: row["value"] for row in read_csv("reports/results/methods_settings.csv")}
+    check(settings_rows.get("chip.max_sor") == str(config["chip"]["max_sor"]),
+          "methods record lists chip.max_sor")
+    references = {row["setting"]: row["in_manifest"] for row in read_csv("reports/results/methods_references.csv")}
+    check(references.get("reference.fasta") == "TRUE" and references.get("reference.dbsnp") == "FALSE",
+          "methods record matches reference files to the manifest")
     print("Report test passed.")
 
 

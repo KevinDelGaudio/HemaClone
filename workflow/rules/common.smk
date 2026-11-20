@@ -291,11 +291,14 @@ fail_if([TOOLS["somalier"]] if shutil.which(TOOLS["somalier"]) is None else [],
 
 # Reports
 REPORT = config["report"]
-CH_RMD = REPORT["ch_rmd"] or os.path.join(WORKFLOW_HOME, "workflow", "report", "ch_report.Rmd")
+REPORT_DIR = os.path.join(WORKFLOW_HOME, "workflow", "report")
+REPORT_RMD = {name: REPORT[f"{name}_rmd"] or os.path.join(REPORT_DIR, f"{name}_report.Rmd")
+              for name in ["ch", "qc", "methods"]}
 if REPORT["enabled"]:
     fail_if([TOOLS["rscript"]] if shutil.which(TOOLS["rscript"]) is None else [],
             "Rscript for the reports not found (tools.rscript; or report.enabled=false)")
-    fail_if([CH_RMD] if not os.path.isfile(CH_RMD) else [], "Report source not found (report.ch_rmd)")
+    fail_if([f"report.{name}_rmd: {path}" for name, path in REPORT_RMD.items() if not os.path.isfile(path)],
+            "Report sources not found")
     if REPORT["exclude_samples"] and not os.path.isfile(REPORT["exclude_samples"]):
         raise PreflightError(f"Exclusion list not found (report.exclude_samples): {REPORT['exclude_samples']}")
 
@@ -416,5 +419,5 @@ def cohort_outputs():
                "chip/chip_calls.oncoplot.maf", "chip/chip_samples.tsv",
                "chip/chip_filter_counts.tsv"]
     if REPORT["enabled"]:
-        outputs.append("reports/ch_report.html")
+        outputs += ["reports/ch_report.html", "reports/qc_report.html", "reports/methods_report.html"]
     return outputs
