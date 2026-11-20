@@ -45,7 +45,7 @@ the design, the steps, the criteria, the outputs and the open items.
 
 - No claim of better performance without a benchmark on shared data against the tools in [`docs/COMPARATORS.md`](docs/COMPARATORS.md).
 - Current gaps are stated until they are closed: single caller; sensitivity and precision not yet measured; the thresholds of the strand-bias and repeat-indel criteria (1.6.0) not yet tuned on a benchmark.
-- Each sample is classified from its own data only, so results do not depend on which other samples are in the run. Within-cohort recurrence is therefore not a filter, by design; recurrent positions are shown for review in `analysis/ch_analysis.Rmd`.
+- Each sample is classified from its own data only, so results do not depend on which other samples are in the run. Within-cohort recurrence is therefore not a filter, by design; recurrent positions are shown for review in the CH report (`workflow/report/ch_report.Rmd`).
 - Sensitivity and precision are reported by VAF bin, with the truth set, data source and versions stated.
 
 ## Interpretation

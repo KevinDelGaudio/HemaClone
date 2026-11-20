@@ -77,6 +77,16 @@ Changes merged into `release/1.6.0`.
   and `SEX_MISMATCH` (with `qc.sex_y_ratio_male` and `qc.expected_sex`). The
   resources command downloads the somalier hg38 sites. A sample counts as
   finished once its somalier extract exists.
+- CH report rendered at the end of a run: cohort rule `ch_report`
+  (`workflow/rules/report.smk`, `workflow/scripts/render_report.R`) writes
+  `reports/ch_report.html` and `reports/results/*.csv`, with R 4.5.1 and
+  maftools 2.26.0 from their own environment in the image
+  (`workflow/docker/report.yaml`; the main tools are unchanged). New `report`
+  block: `report.enabled`, `report.ch_rmd` (a user-modified copy of the Rmd),
+  `report.exclude_samples` (samples left out of the report only; `chip/`
+  keeps every sample). A failed render leaves the other outputs in place and
+  is reported by the runner. `tests/report_test.py` renders it in CI on a
+  synthetic cohort.
 - `tests/chip_sample_test.py`: classification of a synthetic sample, one call
   per case, run in CI inside the image.
 - CI builds a resources folder from a tiny bundle with the real tools
@@ -107,6 +117,12 @@ Changes merged into `release/1.6.0`.
     resource marked every sample as failed with a misleading "FASTQ check
     failed" reason, batch after batch.
 - Snakemake lint is blocking in CI (the per-rule container lint is ignored).
+- `analysis/ch_analysis.Rmd` moved to `workflow/report/ch_report.Rmd` and
+  rendered by the workflow; the author line is `HemaClone <VERSION>`; CSV
+  exports go to `reports/results/`. Analysis unchanged.
+
+### Removed
+- `analysis/exclude_samples.sh`, replaced by `report.exclude_samples`.
 
 ## [1.5.0]
 
