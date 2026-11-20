@@ -66,6 +66,8 @@ reference:
   # GIAB tandem repeats and homopolymers (bgzipped, tabix-indexed), for the
   # repeat-indel criterion
   repeats_bed: "GRCh38_AllTandemRepeatsandHomopolymers_slop5.bed.gz"
+  # somalier sites (polymorphic SNPs) for the sex and sample identity check
+  somalier_sites: "sites.hg38.vcf.gz"
 
 # A reference with ALT or fix-patch contigs (names ending in _alt or _fix) needs
 # the ALT contig list <FASTA>.alt next to the bwa-mem2 index: without it, reads
@@ -81,6 +83,8 @@ resources:
   somatic_url: "https://storage.googleapis.com/gatk-best-practices/somatic-hg38"
   # GIAB genome stratifications (Dwarshuis et al. 2024), tandem repeats and
   # homopolymers, saved bgzipped and indexed under reference.repeats_bed
+  # somalier hg38 sites file, from the somalier release assets
+  somalier_sites_url: "https://github.com/brentp/somalier/releases/download/v0.2.19/sites.hg38.vcf.gz"
   repeats_url: "https://ftp-trace.ncbi.nlm.nih.gov/ReferenceSamples/giab/release/genome-stratifications/v3.3/GRCh38@all/LowComplexity/GRCh38_AllTandemRepeatsandHomopolymers_slop5.bed.gz"
   # Exome kit target BED, hg38 with chr names (flag: --targets)
   targets: null
@@ -99,6 +103,8 @@ resources:
 
 tools:
   bwa: "bwa-mem2.avx2"
+  # Separate environment in the image (workflow/docker/somalier.yaml)
+  somalier: "/opt/conda/envs/somalier/bin/somalier"
   # The run stops if `gatk --version` reports a different version. null = no check.
   gatk_version: "4.6.2.0"
 
@@ -194,6 +200,19 @@ qc:
     max_pct_dupe: 0.50
     max_dropout: 10.0
   # data_type wgs: CollectWgsMetrics over reference.wgs_intervals
+  # Sex and sample identity (somalier). Pairs with relatedness at least
+  # min_relatedness_flag are flagged POSSIBLE_DUPLICATE; pairs at least
+  # min_relatedness_list are listed in related_samples.
+  min_relatedness_flag: 0.8
+  min_relatedness_list: 0.4
+  # Inferred sex: male when the Y/autosome depth ratio is at least this value;
+  # null = ratios reported, no sex inferred (set it from a first cohort run,
+  # where male and female samples form two clusters)
+  sex_y_ratio_male: null
+  # Optional table (sample, sex as male/female), kept on the analysis machine:
+  # samples whose inferred sex differs are flagged SEX_MISMATCH. Needs
+  # sex_y_ratio_male.
+  expected_sex: null
   thresholds_wgs:
     min_mean_coverage: 25
     min_pct_20x: 0.80
@@ -265,6 +284,8 @@ job_sizes:
   insert_size:             {threads: 1, mem_mb: 8000}
   hs_metrics:              {threads: 1, mem_mb: 8000}
   wgs_metrics:             {threads: 1, mem_mb: 8000}
+  somalier_extract:        {threads: 1, mem_mb: 2000}
+  somalier_relate:         {threads: 1, mem_mb: 4000}
   multiqc:                 {threads: 1, mem_mb: 8000}
   qc_flags:                {threads: 1, mem_mb: 1000}
   chip_sample:             {threads: 1, mem_mb: 2000}

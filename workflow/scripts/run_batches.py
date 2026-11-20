@@ -456,7 +456,7 @@ def main():
         command += passthrough
         return command
 
-    cohort_extra = ["--allowed-rules", "multiqc", "qc_flags", "chip_cohort", "cohort_qc"]
+    cohort_extra = ["--allowed-rules", "multiqc", "qc_flags", "chip_cohort", "somalier_relate", "cohort_qc"]
 
     # ---- preflight once, on the whole sheet ----------------------------------------
     # The checks in common.smk run whenever Snakemake reads the workflow. A failure
@@ -486,11 +486,13 @@ def main():
     coverage_metrics = "wgs_metrics" if config["data_type"] == "wgs" else "hs_metrics"
 
     def sample_done(sample):
-        """A sample is finished when its two MAFs and its coverage metrics exist."""
+        """A sample is finished when its two MAFs, its coverage metrics and its
+        somalier extract exist."""
         return all(os.path.isfile(path) for path in [
             f"maf/{sample}_all.funcotated.maf",
             f"maf/{sample}_ch_final.funcotated.maf",
             f"qc/bam/{sample}.{coverage_metrics}.txt",
+            f"qc/somalier/extract/{sample}.somalier",
         ])
 
     failed = {}     # sample -> reason, over the whole run

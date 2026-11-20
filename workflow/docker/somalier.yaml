@@ -1,0 +1,9 @@
+# somalier, in its own environment: its htslib pin differs from the samtools
+# and bcftools of environment.yaml, so the two are kept apart. Every package
+# is pinned; tools.somalier in config.yaml points to this environment.
+name: somalier
+channels:
+  - conda-forge
+  - bioconda
+dependencies:
+  - somalier=0.3.1

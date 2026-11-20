@@ -70,6 +70,28 @@ os.makedirs(os.path.join(work, "giab"))
 with gzip.open(os.path.join(work, "giab", "GRCh38_AllTandemRepeatsandHomopolymers_slop5.bed.gz"), "wt") as handle:
     handle.write("chr1\t1995\t2010\nchr1\t5000\t5020\nchr2\t100\t130\n")
 
+# somalier sites: 200 SNPs on chr1 (positions 1000..10950, every 50 bp),
+# REF from the reference, ALT the next base in ACGT; used by somalier_test.sh
+chr1_seq = None
+with open(os.path.join(bundle, "Homo_sapiens_assembly38.fasta")) as handle:
+    seqs, name = {}, None
+    for line in handle:
+        line = line.strip()
+        if line.startswith(">"):
+            name = line[1:]
+            seqs[name] = []
+        else:
+            seqs[name].append(line)
+chr1_seq = "".join(seqs["chr1"])
+os.makedirs(os.path.join(work, "somalier"))
+with gzip.open(os.path.join(work, "somalier", "sites.hg38.vcf.gz"), "wt") as handle:
+    handle.write("##fileformat=VCFv4.2\n##contig=<ID=chr1,length=20000>\n")
+    handle.write("#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\n")
+    for pos in range(1000, 11000, 50):
+        ref = chr1_seq[pos - 1]
+        alt = "ACGT"[("ACGT".index(ref) + 1) % 4]
+        handle.write(f"chr1\t{pos}\t.\t{ref}\t{alt}\t.\t.\t.\n")
+
 # Kit targets: GENEA (two pieces), GENEB, GENED (at the end of chr1); GENEC uncovered
 with open(os.path.join(work, "kit.bed"), "w") as handle:
     handle.write("chr1\t950\t1100\tt1\nchr1\t1500\t1600\tt2\nchr2\t4950\t5100\tt3\nchr1\t19900\t20000\tt4\n")
@@ -104,6 +126,7 @@ docker run --rm -u "$(id -u):$(id -g)" \
             --set resources.bundle_url=http://127.0.0.1:8765/bundle \
             --set resources.somatic_url=http://127.0.0.1:8765/somatic \
             --set resources.repeats_url=http://127.0.0.1:8765/giab/GRCh38_AllTandemRepeatsandHomopolymers_slop5.bed.gz \
+            --set resources.somalier_sites_url=http://127.0.0.1:8765/somalier/sites.hg38.vcf.gz \
             --set 'resources.panel_genes=[GENEA,GENEB,GENEC,GENED]'
     "
 
@@ -116,7 +139,7 @@ fi
 for name in Homo_sapiens_assembly38.fasta.alt Homo_sapiens_assembly38.fasta.bwt.2bit.64 \
             exome_targets.hg38.interval_list MANIFEST.tsv \
             GRCh38_AllTandemRepeatsandHomopolymers_slop5.bed.gz \
-            GRCh38_AllTandemRepeatsandHomopolymers_slop5.bed.gz.tbi; do
+            GRCh38_AllTandemRepeatsandHomopolymers_slop5.bed.gz.tbi sites.hg38.vcf.gz; do
     [[ -s "${DEST}/${name}" ]] || { echo "ERROR: ${name} missing or empty" >&2; exit 1; }
 done
 echo "Resources test passed: $(($(wc -l < "${DEST}/MANIFEST.tsv") - 1)) files in the manifest, panel as expected."
