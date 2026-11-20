@@ -124,6 +124,22 @@ Changes merged into `release/1.6.0`.
 ### Removed
 - `analysis/exclude_samples.sh`, replaced by `report.exclude_samples`.
 
+### Fixed
+- The sample sheet builder rejected `.fq.gz` files as unrecognised names,
+  although the rest of the workflow accepts them; the synthetic CI project now
+  has one `.fq.gz` sample.
+- MultiQC kept the `.wgs_metrics` suffix in WGS sample names; its title no
+  longer says exome only.
+- The resources command failed with a raw error when a download had finished
+  but was interrupted before its rename (a range request past the end), and
+  printed a traceback on network errors; it now completes the rename, or stops
+  with a message to re-run, which resumes.
+- A reference setting set to null (e.g. `--set reference.wgs_intervals=null`)
+  stopped the run with a Python error; preflight now names the setting.
+- A `--settings` file outside the project folder was not visible in the
+  container; the launcher now mounts its folder.
+- `--cohort-only` now also reports a CH report that failed to render.
+
 ## [1.5.0]
 
 Renamed to HemaClone. No change to calling, filtering or classification:

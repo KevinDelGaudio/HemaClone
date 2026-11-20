@@ -159,6 +159,8 @@ REF = {}
 for key, value in config["reference"].items():
     if key == "dir":
         continue
+    if not value:
+        raise PreflightError(f"reference.{key} is empty: every reference setting needs a file name")
     REF[key] = value if os.path.isabs(value) else os.path.join(REF_DIR, value)
 
 log_preflight(f"resources folder: {REF_DIR}")

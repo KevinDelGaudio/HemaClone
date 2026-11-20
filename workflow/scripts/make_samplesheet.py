@@ -2,7 +2,7 @@
 """
 Build the sample sheet (config/samples.tsv) from a folder of paired FASTQ files.
 
-Recognised file name patterns:
+Recognised file name patterns (.fastq.gz or .fq.gz):
   <sample>_S<n>_L<lane>_R<1|2>_001.fastq.gz   lane-split Illumina output
   <sample>_S<n>_R<1|2>_001.fastq.gz           Illumina output without lane splitting
   <sample>_R<1|2>.fastq.gz                    renamed files
@@ -30,9 +30,9 @@ import sys
 from collections import defaultdict
 
 PATTERNS = [
-    ("lane_split", re.compile(r"^(?P<sample>.+?)_S(?P<snum>\d+)_L(?P<lane>\d+)_R(?P<read>[12])_001\.fastq\.gz$")),
-    ("illumina", re.compile(r"^(?P<sample>.+?)_S(?P<snum>\d+)_R(?P<read>[12])_001\.fastq\.gz$")),
-    ("plain", re.compile(r"^(?P<sample>.+?)_R(?P<read>[12])\.fastq\.gz$")),
+    ("lane_split", re.compile(r"^(?P<sample>.+?)_S(?P<snum>\d+)_L(?P<lane>\d+)_R(?P<read>[12])_001\.f(ast)?q\.gz$")),
+    ("illumina", re.compile(r"^(?P<sample>.+?)_S(?P<snum>\d+)_R(?P<read>[12])_001\.f(ast)?q\.gz$")),
+    ("plain", re.compile(r"^(?P<sample>.+?)_R(?P<read>[12])\.f(ast)?q\.gz$")),
 ]
 NAME_PATTERN = re.compile(r"^[A-Za-z0-9_-]+$")
 COLUMNS = ["sample", "unit", "fq1", "fq2", "flowcell", "lane", "barcode", "rg_id", "rg_pu", "lb", "pattern", "bam"]

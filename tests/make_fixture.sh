@@ -34,7 +34,7 @@ mkdir -p "${PROJECT_DIR}/fastq"
 for mate in 1 2; do
     write_fastq "${PROJECT_DIR}/fastq/SIMA_S1_L001_R${mate}_001.fastq.gz" FCSIM0001 1 "$mate"
     write_fastq "${PROJECT_DIR}/fastq/SIMA_S1_L002_R${mate}_001.fastq.gz" FCSIM0001 2 "$mate"
-    write_fastq "${PROJECT_DIR}/fastq/SIMB_R${mate}.fastq.gz" FCSIM0002 1 "$mate"
+    write_fastq "${PROJECT_DIR}/fastq/SIMB_R${mate}.fq.gz" FCSIM0002 1 "$mate"
 done
 
 mkdir -p "${RESOURCES_DIR}/funcotator_dataSources"

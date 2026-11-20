@@ -91,10 +91,10 @@ resources:
   # GATK hg38 reference bundle and somatic resources
   bundle_url: "https://storage.googleapis.com/gcp-public-data--broad-references/hg38/v0"
   somatic_url: "https://storage.googleapis.com/gatk-best-practices/somatic-hg38"
-  # GIAB genome stratifications (Dwarshuis et al. 2024), tandem repeats and
-  # homopolymers, saved bgzipped and indexed under reference.repeats_bed
   # somalier hg38 sites file, linked from the somalier release notes
   somalier_sites_url: "https://github.com/brentp/somalier/files/3412456/sites.hg38.vcf.gz"
+  # GIAB genome stratifications (Dwarshuis et al. 2024), tandem repeats and
+  # homopolymers, saved bgzipped and indexed under reference.repeats_bed
   repeats_url: "https://ftp-trace.ncbi.nlm.nih.gov/ReferenceSamples/giab/release/genome-stratifications/v3.3/GRCh38@all/LowComplexity/GRCh38_AllTandemRepeatsandHomopolymers_slop5.bed.gz"
   # Exome kit target BED, hg38 with chr names (flag: --targets)
   targets: null
@@ -212,6 +212,10 @@ qc:
     max_pct_dupe: 0.50
     max_dropout: 10.0
   # data_type wgs: CollectWgsMetrics over reference.wgs_intervals
+  thresholds_wgs:
+    min_mean_coverage: 25
+    min_pct_20x: 0.80
+    max_pct_dupe: 0.30
   # Sex and sample identity (somalier). Pairs with relatedness at least
   # min_relatedness_flag are flagged POSSIBLE_DUPLICATE; pairs at least
   # min_relatedness_list are listed in related_samples.
@@ -225,10 +229,6 @@ qc:
   # samples whose inferred sex differs are flagged SEX_MISMATCH. Needs
   # sex_y_ratio_male.
   expected_sex: null
-  thresholds_wgs:
-    min_mean_coverage: 25
-    min_pct_20x: 0.80
-    max_pct_dupe: 0.30
 
 # Tool parameters. "extra" is appended verbatim to the command line.
 tool_params:
