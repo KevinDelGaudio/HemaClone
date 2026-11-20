@@ -81,6 +81,7 @@ Main flags: `--cores`, `--mem-gb` (hard container limits), `--batch-size`,
 - Batches of N samples run to completion one after another (`--batch-size 1` = one sample at a time)
 - Jobs are scheduled into `machine.schedule_fraction` (0.9) of `--mem-gb`, leaving headroom for Java overhead
 - Java heap = `java_heap_fraction` (0.85) of each job's memory; `--set job_sizes.<rule>.mem_mb=N` resizes a job
+- Before the first batch, the preflight checks run once on the full sample sheet; if they fail, the run stops with their message and no batch starts (a missing resource or bad setting concerns the run, not a sample)
 - Failed samples do not stop the run; they are listed in `logs/batches/failed_<time>.tsv`
 - Every rule writes a log (`logs/<rule>/`), including the error that stopped it, and a runtime and memory benchmark (`benchmarks/<rule>/`)
 

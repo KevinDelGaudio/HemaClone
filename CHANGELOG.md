@@ -40,6 +40,10 @@ Changes merged into `release/1.6.0`.
   - `markdup` builds its `-I` arguments from its inputs.
   - Launcher help printed up to the end of the header comment instead of fixed
     line numbers.
+  - `run_batches.py` runs the preflight checks once on the full sample sheet
+    before the first batch and stops the run if they fail. Before, a missing
+    resource marked every sample as failed with a misleading "FASTQ check
+    failed" reason, batch after batch.
 - Snakemake lint is blocking in CI (the per-rule container lint is ignored).
 
 ## [1.5.0]

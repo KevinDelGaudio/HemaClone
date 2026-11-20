@@ -440,6 +440,19 @@ def main():
 
     cohort_extra = ["--allowed-rules", "multiqc", "qc_flags", "chip_cohort", "cohort_qc"]
 
+    # ---- preflight once, on the whole sheet ----------------------------------------
+    # The checks in common.smk run whenever Snakemake reads the workflow. A failure
+    # there (a missing resource, a bad setting) concerns the run, not one sample:
+    # stop before the first batch instead of marking every sample as failed.
+    print("\n--- Preflight checks on the full sample sheet", flush=True)
+    check = subprocess.run(snakemake_command([], full_sheet, ["--list-rules"]),
+                           capture_output=True, text=True)
+    if check.returncode != 0:
+        print(check.stderr, file=sys.stderr)
+        fail("preflight checks failed, so no batch was started. "
+             "Fix the problem above and re-run the same command.")
+    print("Preflight checks passed.", flush=True)
+
     # ---- cohort QC only ----------------------------------------------------------
     if args.cohort_only:
         extra = cohort_extra + (["--dry-run"] if args.dry_run else [])
