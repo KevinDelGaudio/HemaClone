@@ -28,7 +28,7 @@ Changes between versions: [`CHANGELOG.md`](CHANGELOG.md). How to contribute: [`C
 
 - Linux with Docker; the user in the `docker` group
 - hg38 resources in one folder, built with `bash hemaclone.sh resources` (below)
-- The target BED of the exome kit, hg38 coordinates with `chr` names
+- For exome data, the target BED of the kit, hg38 coordinates with `chr` names
 
 ## Get the image
 
@@ -75,6 +75,9 @@ bash hemaclone.sh resources \
   `resources.panel_genes`, from the Funcotator GENCODE annotation, intersected
   with the kit targets and padded by `resources.panel_padding` (50 bp). Genes
   the kit does not cover are listed.
+- For whole-genome data only, leave out `--targets`: the panel is then the
+  exons of the same genes, padded the same way, and no exome interval list is
+  built.
 - `MANIFEST.tsv` records every file with its source, size, MD5 and date.
   Re-running the command skips what is complete.
 
@@ -162,7 +165,8 @@ In WGS mode BQSR is fitted on the WGS calling regions, the recalibrated BAM
 keeps only the gene panel and the contamination sites, the duplicate-marked
 BAM is deleted once QC and BQSR are done (about 100 GB per 30x sample), and QC
 uses genome-wide coverage (`qc.thresholds_wgs`). The exome interval list is
-not needed.
+not needed, and a resources folder built without `--targets` has a gene panel
+made of the genes' exons.
 
 ## Main outputs
 
