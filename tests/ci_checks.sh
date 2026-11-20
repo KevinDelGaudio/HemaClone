@@ -16,6 +16,7 @@
 # 7. CHIP classification of a synthetic sample (tests/chip_sample_test.py)
 # 8. WGS mode: a run without explicit CH depth and VAF floors stops; with
 #    them, the dry run plans genome-wide coverage metrics, not capture metrics
+# 9. BAM and CRAM input re-aligned with the real tools (tests/bam_input_test.sh)
 #
 # Nothing is aligned or called: these checks catch broken rules, settings,
 # preflight checks and launcher logic, not wrong results.
@@ -138,5 +139,8 @@ if grep -qE "^hs_metrics +[0-9]" "${WORK}/wgs_plan.txt"; then
     exit 1
 fi
 echo "WGS dry run: wgs_metrics planned, no capture metrics."
+
+echo "== 9. BAM and CRAM input"
+bash "${TESTS_DIR}/bam_input_test.sh" "$IMAGE" "$RESOURCES"
 
 echo "All checks passed."

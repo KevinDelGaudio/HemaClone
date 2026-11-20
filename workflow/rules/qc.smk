@@ -165,13 +165,15 @@ rule multiqc:
         "qc/multiqc/chip_qc.html",
     params:
         run = QC_RUN,
+        # FastQC runs on FASTQ units only: no qc/fastqc when every unit is BAM/CRAM
+        dirs = "qc/fastqc qc/bam qc/markdup" if FASTQ_BY_BASE else "qc/bam qc/markdup",
     threads: threads_of("multiqc")
     resources:
         mem_mb = mem_of("multiqc"),
     log: "logs/multiqc/multiqc.log"
     benchmark: "benchmarks/multiqc/multiqc.tsv"
     shell:
-        "{params.run} multiqc qc/fastqc qc/bam qc/markdup"
+        "{params.run} multiqc {params.dirs}"
         " --config {input.config}"
         " --outdir qc/multiqc"
         " --filename chip_qc"

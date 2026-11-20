@@ -64,8 +64,18 @@ units = pd.read_csv(config["samples"], sep="\t", dtype=str, keep_default_na=Fals
 fail_if([c for c in REQUIRED_COLUMNS if c not in units.columns],
         "Sample sheet is missing columns")
 
-empty_rows = units.index[units[REQUIRED_COLUMNS].eq("").any(axis=1)].tolist()
+# A unit is a FASTQ pair (fq1, fq2) or a BAM/CRAM file to re-align (bam).
+# Sheets written before BAM input have no bam column: all FASTQ.
+if "bam" not in units.columns:
+    units["bam"] = ""
+FIXED_COLUMNS = [c for c in REQUIRED_COLUMNS if c not in ("fq1", "fq2")]
+empty_rows = units.index[units[FIXED_COLUMNS].eq("").any(axis=1)].tolist()
 fail_if(empty_rows, "Sample sheet rows with empty cells (0-based)")
+
+is_bam = units["bam"].ne("")
+has_fastq = units["fq1"].ne("") & units["fq2"].ne("")
+fail_if(units.index[~(is_bam ^ has_fastq)].tolist(),
+        "Sample sheet rows that need either fq1 and fq2, or bam, not both (0-based)")
 
 fail_if(sorted(units.loc[~units["sample"].str.fullmatch(NAME_PATTERN), "sample"].unique()),
         "Sample names with characters outside [A-Za-z0-9_-]")
@@ -82,9 +92,25 @@ fail_if(duplicated_units.to_records(index=False).tolist(), "Duplicated (sample, 
 duplicated_rg = units.loc[units.duplicated(["sample", "rg_id"], keep=False), ["sample", "rg_id"]]
 fail_if(duplicated_rg.to_records(index=False).tolist(), "Read group IDs repeated within a sample")
 
-all_fastq = pd.concat([units["fq1"], units["fq2"]], ignore_index=True)
+all_fastq = pd.concat([units.loc[has_fastq, "fq1"], units.loc[has_fastq, "fq2"]], ignore_index=True)
 fail_if(sorted(all_fastq[all_fastq.duplicated()].unique()), "FASTQ files listed more than once")
 fail_if([p for p in all_fastq if not os.path.isfile(p)], "FASTQ files not found")
+
+all_bam = units.loc[is_bam, "bam"]
+fail_if(sorted(all_bam[all_bam.duplicated()].unique()), "BAM/CRAM files listed more than once")
+fail_if([p for p in all_bam if not os.path.isfile(p)], "BAM/CRAM files not found")
+fail_if([p for p in all_bam if not p.endswith((".bam", ".cram"))], "bam column entries that are not .bam or .cram")
+
+# CRAM holds bases as differences from the reference it was written against
+CRAM_REFERENCE = config["input"]["cram_reference"]
+if any(p.endswith(".cram") for p in all_bam):
+    if not CRAM_REFERENCE:
+        raise PreflightError("The sample sheet has CRAM files: set the FASTA they were written "
+                             "against with --set input.cram_reference=/path/to/reference.fasta")
+    fail_if([p for p in [CRAM_REFERENCE, f"{CRAM_REFERENCE}.fai"] if not os.path.isfile(p)],
+            "CRAM reference files not found")
+if is_bam.any():
+    log_preflight(f"BAM/CRAM units: {int(is_bam.sum())}, re-aligned; FastQC runs on FASTQ units only")
 
 sample_names = pd.Series(sorted(units["sample"].unique()))
 fail_if(sample_names[sample_names.str.lower().duplicated(keep=False)].tolist(),
@@ -289,6 +315,16 @@ def units_of(sample):
 
 def unit_row(sample, unit):
     return units.loc[(sample, unit)]
+
+
+def unit_is_bam(sample, unit):
+    return unit_row(sample, unit)["bam"] != ""
+
+
+def unit_alignment(sample, unit):
+    """Sorted alignment of one unit: mapped from FASTQ, or re-aligned from BAM/CRAM."""
+    kind = "remapped" if unit_is_bam(sample, unit) else "sorted"
+    return f"bam/units/{sample}.{unit}.{kind}.bam"
 
 
 def read_group(sample, unit):

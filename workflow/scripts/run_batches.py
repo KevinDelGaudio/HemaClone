@@ -298,17 +298,18 @@ def build_sheet(sheet, fastq_dir, rebuild, allow_unparsed):
 
 
 def warn_unlisted_fastq(rows, fastq_dir):
-    """Warn about FASTQ files in the folder that the sample sheet does not list."""
+    """Warn about FASTQ, BAM or CRAM files in the folder that the sample sheet does not list."""
     if not os.path.isdir(fastq_dir):
         return
-    listed = {os.path.realpath(row[col]) for row in rows for col in ("fq1", "fq2")}
+    listed = {os.path.realpath(row[col]) for row in rows for col in ("fq1", "fq2", "bam")
+              if row.get(col)}
     unlisted = sorted(
         name for name in os.listdir(fastq_dir)
-        if name.endswith((".fastq.gz", ".fq.gz")) and not name.startswith("Undetermined")
+        if name.endswith((".fastq.gz", ".fq.gz", ".bam", ".cram")) and not name.startswith("Undetermined")
         and os.path.realpath(os.path.join(fastq_dir, name)) not in listed
     )
     if unlisted:
-        print(f"WARNING: {len(unlisted)} FASTQ file(s) in {fastq_dir}/ are not in the sample sheet "
+        print(f"WARNING: {len(unlisted)} input file(s) in {fastq_dir}/ are not in the sample sheet "
               "and will not be processed:", flush=True)
         for name in unlisted:
             print(f"    {name}", flush=True)
@@ -502,19 +503,23 @@ def main():
               f"started {started:%Y-%m-%d %H:%M} ===", flush=True)
         batch_failed = {}
 
-        # Step 1: FASTQ integrity of the samples not finished yet
+        # Step 1: integrity of the input files (FASTQ pairs, BAM/CRAM) of the samples not finished yet
         unfinished = [s for s in batch if not sample_done(s)]
         if unfinished and not args.dry_run:
             check_sheet = os.path.join(BATCH_DIR, f"batch_{number:03d}_check.tsv")
             check_units = sheet_rows_of(unfinished)
             write_sheet(check_sheet, fieldnames, check_units)
-            targets = [f"qc/fastq_check/{u['sample']}.{u['unit']}.ok" for u in check_units]
-            print(f"--- FASTQ check: {len(targets)} pair(s) of {len(unfinished)} unfinished sample(s)", flush=True)
-            subprocess.run(snakemake_command(targets, check_sheet, ["--quiet", "rules"]))
-            for unit in check_units:
-                if not os.path.isfile(f"qc/fastq_check/{unit['sample']}.{unit['unit']}.ok"):
-                    batch_failed[unit["sample"]] = (f"FASTQ check failed: "
-                                                    f"logs/fastq_check/{unit['sample']}.{unit['unit']}.log")
+            checks = {}     # target -> (sample, label, log)
+            for u in check_units:
+                kind = "bam_check" if u.get("bam") else "fastq_check"
+                name = f"{u['sample']}.{u['unit']}"
+                label = "BAM/CRAM check" if u.get("bam") else "FASTQ check"
+                checks[f"qc/{kind}/{name}.ok"] = (u["sample"], label, f"logs/{kind}/{name}.log")
+            print(f"--- Input check: {len(checks)} unit(s) of {len(unfinished)} unfinished sample(s)", flush=True)
+            subprocess.run(snakemake_command(list(checks), check_sheet, ["--quiet", "rules"]))
+            for target, (sample, label, log_path) in checks.items():
+                if not os.path.isfile(target):
+                    batch_failed[sample] = f"{label} failed: {log_path}"
 
         # Step 2: the workflow, for every sample whose FASTQs passed
         to_run = [s for s in batch if s not in batch_failed]

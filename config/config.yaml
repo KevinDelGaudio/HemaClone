@@ -32,6 +32,12 @@ machine:
 # Each batch runs to completion before the next starts.
 batch_size: 1
 
+# BAM or CRAM input (files in the FASTQ folder, bam column of the sample
+# sheet): reads are extracted, with original qualities from the OQ tag when
+# present, and re-aligned. CRAM needs the FASTA it was written against.
+input:
+  cram_reference: null
+
 # Sequencing design (flag: --data-type): "wes" or "wgs". WGS fits BQSR on
 # reference.wgs_intervals, writes the recalibrated BAM for the gene panel and
 # the contamination sites only, deletes the duplicate-marked BAM once QC and
@@ -198,6 +204,9 @@ tool_params:
   bwa_map:
     sort_mem_per_thread: "3G"
     extra: ""
+  bam_remap:
+    sort_mem_per_thread: "3G"
+    extra: ""
   markdup:
     extra: ""
   base_recalibrator:
@@ -234,6 +243,8 @@ java_heap_fraction: 0.85
 job_sizes:
   fastq_check:             {threads: 3, mem_mb: 1000}
   bwa_map:                 {threads: 8, mem_mb: 45000}
+  bam_check:               {threads: 1, mem_mb: 1000}
+  bam_remap:               {threads: 8, mem_mb: 45000}
   markdup:                 {threads: 2, mem_mb: 16000}
   base_recalibrator:       {threads: 2, mem_mb: 12000}
   apply_bqsr:              {threads: 2, mem_mb: 12000}

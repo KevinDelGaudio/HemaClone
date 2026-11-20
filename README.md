@@ -91,6 +91,26 @@ bash hemaclone.sh run \
 - `--dry-run` shows the planned jobs; `bash hemaclone.sh run --help` lists every flag.
 - Any setting in `config/config.yaml` can be changed with `--set KEY=VALUE`.
 
+### BAM or CRAM input
+
+Put `<sample>.bam` or `<sample>.cram` files in the FASTQ folder (alone or next
+to FASTQs). Their reads are extracted, with the original base qualities from
+the `OQ` tag when present, and re-aligned with the same steps as FASTQ input,
+so every sample is processed identically whatever reference the file was made
+with. The sample name comes from the file name; the library from the header.
+CRAM needs the FASTA it was written against:
+
+```bash
+bash hemaclone.sh run \
+    --cores 32 --mem-gb 96 --batch-size 1 \
+    --resources-dir /path/to/hg38_resources \
+    --tmpdir /path/to/tmp \
+    --set input.cram_reference=/path/to/cram_reference.fasta
+```
+
+Only read pairs are re-aligned (unpaired reads are dropped and counted in
+`logs/bam_remap/`). FastQC runs on FASTQ input only.
+
 ### Whole-genome data
 
 Add `--data-type wgs` and choose the CH depth and VAF floors for your depth;
