@@ -1,7 +1,10 @@
 # =============================================================================
-# Base quality score recalibration, fit over the exome capture intervals
-# so the error model has enough sites to be stable.
+# Base quality score recalibration, fit over the exome capture intervals (WES)
+# or the WGS calling regions (WGS), so the error model has enough sites to be
+# stable. In WGS the recalibrated BAM holds only the reads the later steps
+# use: the gene panel (Mutect2) and the common sites (contamination), padded.
 # =============================================================================
+
 
 rule base_recalibrator:
     input:
@@ -14,7 +17,7 @@ rule base_recalibrator:
         ref = REF["fasta"],
         dbsnp = REF["dbsnp"],
         mills = REF["mills"],
-        intervals = REF["exome_intervals"],
+        intervals = BQSR_INTERVALS,
         extra = TP["base_recalibrator"]["extra"],
     threads: threads_of("base_recalibrator")
     resources:
@@ -44,6 +47,7 @@ rule apply_bqsr:
     params:
         java = java_opts,
         ref = REF["fasta"],
+        intervals = apply_bqsr_intervals(),
         extra = TP["apply_bqsr"]["extra"],
     threads: threads_of("apply_bqsr")
     resources:
@@ -55,6 +59,7 @@ rule apply_bqsr:
         " -R {params.ref}"
         " -I {input.bam}"
         " --bqsr-recal-file {input.table}"
+        "{params.intervals}"
         " {params.extra}"
         " -O {output.bam}"
         " > {log} 2>&1"

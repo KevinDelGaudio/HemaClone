@@ -13,6 +13,16 @@ COPY --chown=$MAMBA_USER:$MAMBA_USER workflow/docker/environment.yaml /tmp/envir
 RUN micromamba install -y -n base -f /tmp/environment.yaml \
     && micromamba clean --all --yes
 
+# 1b. somalier in its own environment (its htslib pin differs from the tools above)
+COPY --chown=$MAMBA_USER:$MAMBA_USER workflow/docker/somalier.yaml /tmp/somalier.yaml
+RUN micromamba create -y -f /tmp/somalier.yaml \
+    && micromamba clean --all --yes
+
+# 1c. R for the reports, in its own environment
+COPY --chown=$MAMBA_USER:$MAMBA_USER workflow/docker/report.yaml /tmp/report.yaml
+RUN micromamba create -y -f /tmp/report.yaml \
+    && micromamba clean --all --yes
+
 # 2. Workflow code and default config
 USER root
 COPY VERSION /opt/hemaclone/VERSION

@@ -6,6 +6,10 @@
 #   chip/chip_calls.oncoplot.maf  the same plus one Silent placeholder row per
 #                               CHIP- sample, so oncoplot shows the whole cohort
 #   chip/chip_samples.tsv       one row per sample, CHIP- included (clinicalData)
+#   chip/chip_filter_counts.tsv per criterion: calls failing it, and calls
+#                               failing only it (those it alone removes)
+
+import sys
 
 import pandas as pd
 
@@ -17,6 +21,13 @@ MAF_CORE = ["Hugo_Symbol", "Chromosome", "Start_Position", "End_Position",
 PLACEHOLDER_GENE = "CHIP_NEGATIVE_PLACEHOLDER"
 
 
+def fail(handle, message):
+    """Write the error to the rule log (Snakemake does not capture a script's
+    stderr there), then stop."""
+    print(f"ERROR: {message}", file=handle, flush=True)
+    sys.exit(message)
+
+
 def write_maf(frame, path):
     columns = MAF_CORE + [c for c in frame.columns if c not in MAF_CORE]
     with open(path, "w") as handle:
@@ -24,8 +35,20 @@ def write_maf(frame, path):
         frame[columns].to_csv(handle, sep="\t", index=False)
 
 
-def main(snakemake):
-    log = open(snakemake.log[0], "w")
+def filter_counts(candidates):
+    """One row per criterion: calls failing it, and calls failing it and no other."""
+    criteria = [c for c in candidates.columns if c.startswith("pass_")]
+    rows = []
+    for criterion in criteria:
+        others = [c for c in criteria if c != criterion]
+        failing = ~candidates[criterion]
+        only = failing & candidates[others].all(axis=1)
+        rows.append({"criterion": criterion, "candidates": len(candidates),
+                     "failing": int(failing.sum()), "failing_only_this": int(only.sum())})
+    return pd.DataFrame(rows, columns=["criterion", "candidates", "failing", "failing_only_this"])
+
+
+def main(snakemake, log):
     samples = list(snakemake.params.samples)
     large = snakemake.params.large_clone_vaf
 
@@ -34,22 +57,28 @@ def main(snakemake):
     for sample, path, status_path in zip(samples, snakemake.input.tables, snakemake.input.status):
         table = pd.read_csv(path, sep="\t", dtype=str, keep_default_na=False)
         if table["Tumor_Sample_Barcode"].ne(sample).any():
-            raise SystemExit(f"{path}: Tumor_Sample_Barcode differs from sample {sample}")
+            fail(log, f"{path}: Tumor_Sample_Barcode differs from sample {sample}")
         tables.append(table)
         status = pd.read_csv(status_path, sep="\t", dtype=str)
         if status.at[0, "sample"] != sample:
-            raise SystemExit(f"{status_path}: belongs to {status.at[0, 'sample']}, not {sample}")
+            fail(log, f"{status_path}: belongs to {status.at[0, 'sample']}, not {sample}")
         gnomad_checked[sample] = status.at[0, "gnomad_checked"] == "True"
     candidates = pd.concat(tables, ignore_index=True) if tables else pd.DataFrame(columns=MAF_CORE)
 
     flags = [c for c in candidates.columns if c.startswith("pass_")] + \
-            ["qualifies", "counts_for_status", "in_pon", "pon_hotspot", "gnomad_checked"]
+            ["qualifies", "counts_for_status", "in_pon", "pon_hotspot", "gnomad_checked",
+             "is_indel", "in_str", "in_giab_repeat", "in_repeat"]
     for c in flags:
         candidates[c] = candidates[c].astype(str).str.lower().eq("true")
-    for c in ["t_vaf", "t_depth"]:
+    for c in ["t_vaf", "t_depth", "sor"]:
         candidates[c] = pd.to_numeric(candidates[c])
 
     candidates.to_csv(snakemake.output.candidates, sep="\t", index=False)
+
+    counts = filter_counts(candidates)
+    counts.to_csv(snakemake.output.filter_counts, sep="\t", index=False)
+    for row in counts.itertuples(index=False):
+        print(f"  {row.criterion}: failing {row.failing}, only this {row.failing_only_this}", file=log)
 
     counted = candidates[candidates["counts_for_status"]].copy()
     other = candidates[candidates["qualifies"] & ~candidates["counts_for_status"]]
@@ -91,7 +120,7 @@ def main(snakemake):
     unchecked = per_sample.loc[~per_sample["gnomad_checked"], "Tumor_Sample_Barcode"].tolist()
     if unchecked:
         print(f"WARNING: gnomAD criterion skipped (no gnomAD column) for: {', '.join(unchecked)}", file=log)
-    log.close()
 
 
-main(snakemake)
+with open(snakemake.log[0], "w") as log_handle:
+    main(snakemake, log_handle)

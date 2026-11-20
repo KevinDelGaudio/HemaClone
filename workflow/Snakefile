@@ -11,7 +11,8 @@
 #
 # Targets:
 #   per_sample  every per-sample output (MAFs, per-sample QC, CHIP classification)
-#   cohort_qc   MultiQC report, qc_flags.tsv and the CHIP tables over the whole sheet
+#   cohort_qc   MultiQC report, qc_flags.tsv, somalier relatedness, the CHIP
+#               tables and the CH report over the whole sheet
 #   all         both
 # =============================================================================
 
@@ -56,3 +57,4 @@ include: "rules/bqsr.smk"
 include: "rules/calling.smk"
 include: "rules/annotation.smk"
 include: "rules/chip.smk"
+include: "rules/report.smk"

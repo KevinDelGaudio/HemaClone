@@ -7,10 +7,19 @@
 #   bash tests/ci_checks.sh hemaclone:<VERSION>
 #
 # 1. Syntax of every shell and Python script in the image
-# 2. Synthetic project (tests/make_fixture.sh): tiny FASTQs, empty resources
-# 3. Full launcher dry run, with the launcher copied out of the image
-# 4. Dry run of the whole job graph, cohort steps included
-# 5. Snakemake lint, reported but not blocking
+# 2. Synthetic project (tests/make_fixture.sh): tiny FASTQs
+# 3. Resources folder built by get_resources.py from a tiny bundle
+#    (tests/resources_test.sh), used by the dry runs below with default names
+# 4. Full launcher dry run, with the launcher copied out of the image
+# 5. Dry run of the whole job graph, cohort steps included
+# 6. Snakemake lint: fails on any lint but the per-rule container lint
+# 7. CHIP classification of a synthetic sample (tests/chip_sample_test.py)
+# 8. WGS mode: a run without explicit CH depth and VAF floors stops; with
+#    them, the dry run plans genome-wide coverage metrics, not capture metrics
+# 9. BAM and CRAM input re-aligned with the real tools (tests/bam_input_test.sh)
+# 10. Sex and identity check with the real somalier (tests/somalier_test.sh)
+# 11. CH, QC and methods reports rendered on a synthetic cohort, one sample
+#     excluded (tests/report_test.py)
 #
 # Nothing is aligned or called: these checks catch broken rules, settings,
 # preflight checks and launcher logic, not wrong results.
@@ -34,6 +43,7 @@ WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 PROJECT="${WORK}/project"
 RESOURCES="${WORK}/resources"
+FIXTURE_RESOURCES="${WORK}/fixture_resources"
 TMP_DIR="${WORK}/tmp"
 mkdir -p "$PROJECT" "$TMP_DIR"
 
@@ -49,9 +59,12 @@ print(f\"{len(sys.argv) - 1} Python scripts parsed\")' ${IMAGE_HOME}/workflow/sc
 "
 
 echo "== 2. Synthetic project"
-bash "${TESTS_DIR}/make_fixture.sh" "$PROJECT" "$RESOURCES"
+bash "${TESTS_DIR}/make_fixture.sh" "$PROJECT" "$FIXTURE_RESOURCES"
 
-echo "== 3. Launcher dry run"
+echo "== 3. Resources folder"
+bash "${TESTS_DIR}/resources_test.sh" "$IMAGE" "$RESOURCES"
+
+echo "== 4. Launcher dry run"
 cd "$PROJECT"
 docker run --rm "$IMAGE" cat "${IMAGE_HOME}/workflow/hemaclone.sh" > hemaclone.sh
 bash hemaclone.sh run \
@@ -82,18 +95,62 @@ snakemake_in_image() {
             --config samples=config/samples.tsv
 }
 
-echo "== 4. Whole job graph, cohort steps included"
+echo "== 5. Whole job graph, cohort steps included"
 snakemake_in_image all --dry-run --quiet rules
 
-echo "== 5. Lint (reported, not blocking)"
+echo "== 6. Lint"
 LINT_REPORT="${WORK}/lint.txt"
-if snakemake_in_image --lint > "$LINT_REPORT" 2>&1; then
-    echo "No lints."
-else
-    grep -v '^\[preflight\]' "$LINT_REPORT" || true
+LINT_STATUS=0
+snakemake_in_image --lint > "$LINT_REPORT" 2>&1 || LINT_STATUS=$?
+grep -v '^\[preflight\]' "$LINT_REPORT" || true
+# Snakemake exits 1 when it finds lints; a failure without any lint means lint did not run
+if [[ "$LINT_STATUS" -ne 0 ]] && ! grep -q '^Lints for' "$LINT_REPORT"; then
+    echo "ERROR: snakemake --lint failed (exit ${LINT_STATUS}) without reporting lints" >&2
+    exit 1
 fi
 # The per-rule container lint does not apply: the whole workflow runs in one image
 OTHER_LINTS="$(grep -E '^\s+\* ' "$LINT_REPORT" | grep -vc 'Specify a conda environment or container' || true)"
 echo "Lints other than the per-rule container lint: ${OTHER_LINTS}"
+if [[ "$OTHER_LINTS" -ne 0 ]]; then
+    echo "ERROR: fix the lints above" >&2
+    exit 1
+fi
+
+echo "== 7. CHIP classification"
+docker run --rm -u "$(id -u):$(id -g)" -v "${TESTS_DIR}:/tests:ro" -e HOME=/tmp -w /tmp \
+    "$IMAGE" python /tests/chip_sample_test.py "$IMAGE_HOME"
+
+echo "== 8. WGS mode"
+cd "$PROJECT"
+WGS_ARGS=( run --image "$IMAGE" --cores "$CORES" --mem-gb "$MEM_GB" --batch-size 1
+           --resources-dir "$RESOURCES" --tmpdir "$TMP_DIR"
+           --set job_sizes.bwa_map.mem_mb=12000 --set job_sizes.markdup.mem_mb=12000
+           --data-type wgs --dry-run )
+if bash hemaclone.sh "${WGS_ARGS[@]}" > "${WORK}/wgs_unset.txt" 2>&1; then
+    echo "ERROR: a WGS run without ch_filter.min_dp and min_vaf did not stop" >&2
+    exit 1
+fi
+grep -q "a WGS run must set ch_filter.min_dp and ch_filter.min_vaf" "${WORK}/wgs_unset.txt" \
+    || { cat "${WORK}/wgs_unset.txt" >&2; echo "ERROR: unexpected message for an unset WGS run" >&2; exit 1; }
+echo "WGS run without floors stopped as expected."
+bash hemaclone.sh "${WGS_ARGS[@]}" --set ch_filter.min_dp=20 --set ch_filter.min_vaf=0.10 \
+    > "${WORK}/wgs_plan.txt" 2>&1 || { cat "${WORK}/wgs_plan.txt" >&2; exit 1; }
+grep -qE "^wgs_metrics +[0-9]" "${WORK}/wgs_plan.txt" \
+    || { echo "ERROR: the WGS plan has no wgs_metrics job" >&2; exit 1; }
+if grep -qE "^hs_metrics +[0-9]" "${WORK}/wgs_plan.txt"; then
+    echo "ERROR: the WGS plan has hs_metrics jobs" >&2
+    exit 1
+fi
+echo "WGS dry run: wgs_metrics planned, no capture metrics."
+
+echo "== 9. BAM and CRAM input"
+bash "${TESTS_DIR}/bam_input_test.sh" "$IMAGE" "$RESOURCES"
+
+echo "== 10. Sex and identity check"
+bash "${TESTS_DIR}/somalier_test.sh" "$IMAGE" "$RESOURCES"
+
+echo "== 11. Reports"
+docker run --rm -u "$(id -u):$(id -g)" -v "${TESTS_DIR}:/tests:ro" -e HOME=/tmp -w /tmp \
+    "$IMAGE" python /tests/report_test.py "$IMAGE_HOME"
 
 echo "All checks passed."

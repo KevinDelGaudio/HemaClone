@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 """
-Run the HemaClone in batches of N samples, with every setting available
+Run HemaClone in batches of N samples, with every setting available
 as a launch flag.
 
 Each batch runs to completion (alignment through MAFs and per-sample QC)
 before the next batch starts, so no more than N samples are ever in progress.
-After the last batch, the cohort QC report (MultiQC, qc_flags.tsv) is built
-once over the whole sample sheet.
+After the last batch, the cohort step runs once over the whole sample sheet:
+MultiQC, qc_flags.tsv, the somalier relatedness check, the CHIP tables and
+the CH report.
 
 Finished samples are recognised by Snakemake and skipped in seconds, so after
 a failure, fix the cause and re-run the same command to resume.
@@ -62,6 +63,7 @@ KEYS_WITH_FLAGS = {
     "reference.dir": "--resources-dir",
     "tmpdir": "--tmpdir",
     "fastq_dir": "--fastq-dir",
+    "data_type": "--data-type",
 }
 
 SAMPLESHEET_SCRIPT = os.path.join(WORKFLOW_HOME, "workflow", "scripts", "make_samplesheet.py")
@@ -76,7 +78,7 @@ def parse_args(argv):
 
     parser = argparse.ArgumentParser(
         prog="run",
-        description="Run the HemaClone in batches. Every flag is optional; "
+        description="Run HemaClone in batches. Every flag is optional; "
                     "defaults come from config/config.yaml.",
         epilog='Arguments after "--" are passed to snakemake unchanged '
                "(except cores, resources and config, which have their own flags).")
@@ -98,6 +100,9 @@ def parse_args(argv):
     parser.add_argument("--allow-unparsed-headers", action="store_true",
                         help="when building the sheet, accept FASTQs whose first header is not "
                              "Casava 1.8+ (read group falls back to <sample>.<unit>)")
+    parser.add_argument("--data-type", choices=["wes", "wgs"], default=None,
+                        help="sequencing design (default: data_type); wgs needs "
+                             "--set ch_filter.min_dp=... and --set ch_filter.min_vaf=...")
     parser.add_argument("--resources-dir", default=None,
                         help="folder with the reference files (default: reference.dir)")
     parser.add_argument("--tmpdir", default=None,
@@ -143,7 +148,7 @@ def workflow_version():
             version = handle.read().strip()
     info = {"version": version, "code": WORKFLOW_HOME,
             "image": os.environ.get("HEMACLONE_IMAGE", "none (not run through hemaclone.sh)"),
-            "mode": os.environ.get("CHIP_MODE", "direct")}
+            "mode": os.environ.get("HEMACLONE_MODE", "direct")}
     if shutil.which("git"):
         commit = subprocess.run(["git", "-C", WORKFLOW_HOME, "rev-parse", "--short", "HEAD"],
                                 capture_output=True, text=True)
@@ -294,17 +299,18 @@ def build_sheet(sheet, fastq_dir, rebuild, allow_unparsed):
 
 
 def warn_unlisted_fastq(rows, fastq_dir):
-    """Warn about FASTQ files in the folder that the sample sheet does not list."""
+    """Warn about FASTQ, BAM or CRAM files in the folder that the sample sheet does not list."""
     if not os.path.isdir(fastq_dir):
         return
-    listed = {os.path.realpath(row[col]) for row in rows for col in ("fq1", "fq2")}
+    listed = {os.path.realpath(row[col]) for row in rows for col in ("fq1", "fq2", "bam")
+              if row.get(col)}
     unlisted = sorted(
         name for name in os.listdir(fastq_dir)
-        if name.endswith((".fastq.gz", ".fq.gz")) and not name.startswith("Undetermined")
+        if name.endswith((".fastq.gz", ".fq.gz", ".bam", ".cram")) and not name.startswith("Undetermined")
         and os.path.realpath(os.path.join(fastq_dir, name)) not in listed
     )
     if unlisted:
-        print(f"WARNING: {len(unlisted)} FASTQ file(s) in {fastq_dir}/ are not in the sample sheet "
+        print(f"WARNING: {len(unlisted)} input file(s) in {fastq_dir}/ are not in the sample sheet "
               "and will not be processed:", flush=True)
         for name in unlisted:
             print(f"    {name}", flush=True)
@@ -314,8 +320,19 @@ def warn_unlisted_fastq(rows, fastq_dir):
 
 def resolved_reference(reference):
     folder = reference["dir"]
-    return {key: (value if key == "dir" or os.path.isabs(value) else os.path.join(folder, value))
+    return {key: (value if key == "dir" or not value or os.path.isabs(value) else os.path.join(folder, value))
             for key, value in reference.items()}
+
+
+def note_missing_report(config):
+    """Reports are rendered last: when one fails, the cohort tables are complete."""
+    if not config["report"]["enabled"]:
+        return
+    for name in ["ch_report", "qc_report", "methods_report"]:
+        if not os.path.isfile(f"reports/{name}.html"):
+            print(f"\nReport not rendered: reports/{name}.html (log: logs/{name}/{name}.log)\n"
+                  "  The tables in chip/ and qc/ are complete. Fix the cause and run again with --cohort-only.",
+                  file=sys.stderr)
 
 
 def resolved_pon(config):
@@ -347,7 +364,19 @@ def main():
         set_nested(overrides, ["tmpdir"], args.tmpdir)
     if args.fastq_dir:
         set_nested(overrides, ["fastq_dir"], args.fastq_dir)
+    if args.data_type:
+        set_nested(overrides, ["data_type"], args.data_type)
     config = deep_update(copy.deepcopy(base_config), overrides)
+
+    # The CH depth and VAF floors are tuned for WES depth: a WGS run must choose its own
+    if config["data_type"] == "wgs":
+        explicit = overrides.get("ch_filter", {})
+        unset = [f"ch_filter.{key}" for key in ("min_dp", "min_vaf") if key not in explicit]
+        if unset:
+            fail(f"a WGS run must set {' and '.join(unset)} at launch (the defaults, DP >= "
+                 f"{base_config['ch_filter']['min_dp']} and VAF >= {base_config['ch_filter']['min_vaf']}, "
+                 "are tuned for WES depth), e.g. --set ch_filter.min_dp=20 --set ch_filter.min_vaf=0.10 "
+                 "for 30x; see the README for the expected sensitivity")
 
     machine = config["machine"]
     cores = args.cores if args.cores is not None else machine["cores"]
@@ -413,6 +442,7 @@ def main():
     print(f"  workflow     : {version['version']}  [{version['mode']}]  image: {version['image']}")
     print(f"  code from    : {WORKFLOW_HOME}" + (f"  (git {version['git_commit']})" if "git_commit" in version else ""))
     print(f"  sample sheet : {full_sheet}  (FASTQ folder: {fastq_dir})")
+    print(f"  data type    : {config['data_type']}")
     print(f"  samples      : {len(samples)}   batch size: {batch_size}   batches: {len(batches)}")
     print(f"  cores        : {cores}")
     print(f"  RAM          : {mem_gb:g} GB limit, jobs scheduled into {budget_mb / 1024:.0f} GB")
@@ -438,26 +468,47 @@ def main():
         command += passthrough
         return command
 
-    cohort_extra = ["--allowed-rules", "multiqc", "qc_flags", "chip_cohort", "cohort_qc"]
+    cohort_extra = ["--allowed-rules", "multiqc", "qc_flags", "chip_cohort", "somalier_relate",
+                    "ch_report", "qc_report", "tool_versions", "methods_report", "cohort_qc"]
+
+    # ---- preflight once, on the whole sheet ----------------------------------------
+    # The checks in common.smk run whenever Snakemake reads the workflow. A failure
+    # there (a missing resource, a bad setting) concerns the run, not one sample:
+    # stop before the first batch instead of marking every sample as failed.
+    print("\n--- Preflight checks on the full sample sheet", flush=True)
+    check = subprocess.run(snakemake_command([], full_sheet, ["--list-rules"]),
+                           capture_output=True, text=True)
+    if check.returncode != 0:
+        print(check.stderr, file=sys.stderr)
+        fail("preflight checks failed, so no batch was started. "
+             "Fix the problem above and re-run the same command.")
+    print("Preflight checks passed.", flush=True)
 
     # ---- cohort QC only ----------------------------------------------------------
     if args.cohort_only:
         extra = cohort_extra + (["--dry-run"] if args.dry_run else [])
-        sys.exit(subprocess.run(snakemake_command(["cohort_qc"], full_sheet, extra)).returncode)
+        returncode = subprocess.run(snakemake_command(["cohort_qc"], full_sheet, extra)).returncode
+        if not args.dry_run:
+            note_missing_report(config)
+        sys.exit(returncode)
 
     run_log = f"{run_prefix}.tsv"
     with open(run_log, "w") as handle:
         handle.write("batch\tsamples\tstatus\tstarted\tminutes\n")
 
-    def units_of(sample_names):
+    def sheet_rows_of(sample_names):
         return [row for row in rows if row["sample"] in sample_names]
 
+    coverage_metrics = "wgs_metrics" if config["data_type"] == "wgs" else "hs_metrics"
+
     def sample_done(sample):
-        """A sample is finished when its two MAFs and its capture metrics exist."""
+        """A sample is finished when its two MAFs, its coverage metrics and its
+        somalier extract exist."""
         return all(os.path.isfile(path) for path in [
             f"maf/{sample}_all.funcotated.maf",
             f"maf/{sample}_ch_final.funcotated.maf",
-            f"qc/bam/{sample}.hs_metrics.txt",
+            f"qc/bam/{sample}.{coverage_metrics}.txt",
+            f"qc/somalier/extract/{sample}.somalier",
         ])
 
     failed = {}     # sample -> reason, over the whole run
@@ -470,25 +521,29 @@ def main():
               f"started {started:%Y-%m-%d %H:%M} ===", flush=True)
         batch_failed = {}
 
-        # Step 1: FASTQ integrity of the samples not finished yet
+        # Step 1: integrity of the input files (FASTQ pairs, BAM/CRAM) of the samples not finished yet
         unfinished = [s for s in batch if not sample_done(s)]
         if unfinished and not args.dry_run:
             check_sheet = os.path.join(BATCH_DIR, f"batch_{number:03d}_check.tsv")
-            check_units = units_of(unfinished)
+            check_units = sheet_rows_of(unfinished)
             write_sheet(check_sheet, fieldnames, check_units)
-            targets = [f"qc/fastq_check/{u['sample']}.{u['unit']}.ok" for u in check_units]
-            print(f"--- FASTQ check: {len(targets)} pair(s) of {len(unfinished)} unfinished sample(s)", flush=True)
-            subprocess.run(snakemake_command(targets, check_sheet, ["--quiet", "rules"]))
-            for unit in check_units:
-                if not os.path.isfile(f"qc/fastq_check/{unit['sample']}.{unit['unit']}.ok"):
-                    batch_failed[unit["sample"]] = (f"FASTQ check failed: "
-                                                    f"logs/fastq_check/{unit['sample']}.{unit['unit']}.log")
+            checks = {}     # target -> (sample, label, log)
+            for u in check_units:
+                kind = "bam_check" if u.get("bam") else "fastq_check"
+                name = f"{u['sample']}.{u['unit']}"
+                label = "BAM/CRAM check" if u.get("bam") else "FASTQ check"
+                checks[f"qc/{kind}/{name}.ok"] = (u["sample"], label, f"logs/{kind}/{name}.log")
+            print(f"--- Input check: {len(checks)} unit(s) of {len(unfinished)} unfinished sample(s)", flush=True)
+            subprocess.run(snakemake_command(list(checks), check_sheet, ["--quiet", "rules"]))
+            for target, (sample, label, log_path) in checks.items():
+                if not os.path.isfile(target):
+                    batch_failed[sample] = f"{label} failed: {log_path}"
 
         # Step 2: the workflow, for every sample whose FASTQs passed
         to_run = [s for s in batch if s not in batch_failed]
         if to_run:
             sheet = os.path.join(BATCH_DIR, f"batch_{number:03d}.tsv")
-            write_sheet(sheet, fieldnames, units_of(to_run))
+            write_sheet(sheet, fieldnames, sheet_rows_of(to_run))
             extra = ["--dry-run"] if args.dry_run else []
             returncode = subprocess.run(snakemake_command(["per_sample"], sheet, extra)).returncode
             for sample in to_run:
@@ -541,6 +596,7 @@ def main():
 
     print("\n=== cohort QC report ===", flush=True)
     returncode = subprocess.run(snakemake_command(["cohort_qc"], full_sheet, cohort_extra)).returncode
+    note_missing_report(config)
     with open(run_log, "a") as handle:
         handle.write(f"cohort\tall\t{'ok' if returncode == 0 else 'failed'}\t-\t-\n")
     print(f"Batch summary: {run_log}")

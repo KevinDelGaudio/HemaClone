@@ -6,6 +6,9 @@
 #                                         from fastq/ when it does not exist yet
 #   bash hemaclone.sh run --help               list every run flag
 #   bash hemaclone.sh samplesheet              only build config/samples.tsv, to inspect it
+#   bash hemaclone.sh resources --resources-dir DIR --targets KIT.bed --cores N --mem-gb M
+#                                              download and build the hg38 resources into DIR
+#                                              (without --targets: a folder for WGS only)
 #   bash hemaclone.sh shell                    shell inside the container
 #   bash hemaclone.sh build                    build the image (from a code checkout)
 #
@@ -14,8 +17,9 @@
 # this script sits in instead, with the tools of the same image.
 #
 # --cores and --mem-gb are hard limits: the container can never use more CPU
-# or RAM than that. The project folder, the FASTQ folder, the resources folder
-# and the tmpdir are mounted automatically; add other host folders with --mount PATH.
+# or RAM than that. The project folder, the FASTQ folder, the resources folder,
+# the tmpdir and the folder of a --settings file are mounted automatically; add
+# other host folders with --mount PATH (e.g. for a file given with --set).
 #
 # Get the launcher for a new project from the image:
 #   docker run --rm hemaclone:<version> cat /opt/hemaclone/workflow/hemaclone.sh > hemaclone.sh
@@ -33,8 +37,10 @@ ROOT="$(pwd)"
 
 die() { echo "ERROR: $*" >&2; exit 1; }
 
+# Help: the header comment, from the line after the first "# ===" rule to the next one
 usage() {
-    sed -n '3,21p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+    awk 'NR > 2 && /^# =+$/ { exit }
+         NR > 2 { sub(/^# ?/, ""); print }' "${BASH_SOURCE[0]}"
     exit 0
 }
 
@@ -120,6 +126,7 @@ build_mounts() {
     mkdir -p "$tmp_dir" || die "cannot create tmpdir: $tmp_dir"
 
     MOUNTS=( "$ROOT" "$resources_dir" "$tmp_dir" "${EXTRA_MOUNTS[@]}" )
+    [[ -n "$SETTINGS" ]] && MOUNTS+=( "$(dirname "$(absolute "$SETTINGS")")" )
     [[ -n "$fastq_real" ]] && MOUNTS+=( "$fastq_real" )
     [[ "$MODE" == "dev" ]] && MOUNTS+=( "$CHECKOUT" )
     VOLUME_ARGS=()
@@ -131,6 +138,20 @@ build_mounts() {
         seen+="$m "
         VOLUME_ARGS+=( -v "${m}:${m}" )
     done
+}
+
+# --cores and --mem-gb: whole numbers within what this machine has
+check_limits() {
+    CORES="$(setting "$CORES" machine cores)"
+    MEM_GB="$(setting "$MEM_GB" machine mem_gb)"
+    [[ "$CORES"  =~ ^[0-9]+$ && "$CORES"  -ge 1 ]] || die "--cores must be a whole number >= 1 (got '$CORES')"
+    [[ "$MEM_GB" =~ ^[0-9]+$ && "$MEM_GB" -ge 1 ]] || die "--mem-gb must be a whole number of GB >= 1 (got '$MEM_GB')"
+
+    local host_cores host_mem_gb
+    host_cores="$(nproc)"
+    host_mem_gb="$(awk '/^MemTotal:/ { printf "%d", $2 / 1024 / 1024 }' /proc/meminfo)"
+    [[ "$CORES"  -le "$host_cores" ]]  || die "--cores $CORES is more than this machine has ($host_cores)"
+    [[ "$MEM_GB" -le "$host_mem_gb" ]] || die "--mem-gb $MEM_GB is more than this machine has ($host_mem_gb GB)"
 }
 
 # docker run with mounts, host user, and CPU/RAM hard limits
@@ -145,7 +166,7 @@ docker_run() {
         --memory-swap "${mem_gb}g" \
         -u "$(id -u):$(id -g)" \
         -e HEMACLONE_IMAGE="$IMAGE" \
-        -e CHIP_MODE="$MODE" \
+        -e HEMACLONE_MODE="$MODE" \
         "${VOLUME_ARGS[@]}" \
         -w "$ROOT" \
         "$IMAGE" \
@@ -155,11 +176,11 @@ docker_run() {
 [[ $# -ge 1 ]] || usage
 COMMAND="$1"; shift
 
-CORES=""; MEM_GB=""; RESOURCES_DIR=""; TMP_DIR=""; FASTQ_DIR=""; SETTINGS=""; IMAGE_FLAG=""; DEV=0
+CORES=""; MEM_GB=""; RESOURCES_DIR=""; TMP_DIR=""; FASTQ_DIR=""; SETTINGS=""; TARGETS=""; IMAGE_FLAG=""; DEV=0
 EXTRA_MOUNTS=(); RUN_ARGS=()
 
 # Flags read by the launcher. --cores, --mem-gb, --mount, --image and --dev are
-# consumed here; --resources-dir, --tmpdir, --fastq-dir and --settings are also passed on.
+# consumed here; --resources-dir, --tmpdir, --fastq-dir, --settings and --targets are also passed on.
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --cores)         [[ $# -ge 2 ]] || die "--cores needs a value";          CORES="$2"; shift 2 ;;
@@ -170,7 +191,8 @@ while [[ $# -gt 0 ]]; do
         --resources-dir) [[ $# -ge 2 ]] || die "--resources-dir needs a folder"; RESOURCES_DIR="$2"; RUN_ARGS+=( "$1" "$2" ); shift 2 ;;
         --tmpdir)        [[ $# -ge 2 ]] || die "--tmpdir needs a folder";        TMP_DIR="$2"; RUN_ARGS+=( "$1" "$2" ); shift 2 ;;
         --fastq-dir)     [[ $# -ge 2 ]] || die "--fastq-dir needs a folder";     FASTQ_DIR="$2"; RUN_ARGS+=( "$1" "$2" ); shift 2 ;;
-        --settings)      [[ $# -ge 2 ]] || die "--settings needs a file";        SETTINGS="$2"; RUN_ARGS+=( "$1" "$2" ); shift 2 ;;
+        --settings)      [[ $# -ge 2 ]] || die "--settings needs a file";        SETTINGS="$2"; RUN_ARGS+=( "$1" "$(absolute "$2")" ); shift 2 ;;
+        --targets)       [[ $# -ge 2 ]] || die "--targets needs a BED file";     TARGETS="$2"; RUN_ARGS+=( "$1" "$(absolute "$2")" ); shift 2 ;;
         --)              RUN_ARGS+=( "$@" ); break ;;
         *)               RUN_ARGS+=( "$1" ); shift ;;
     esac
@@ -210,17 +232,7 @@ case "$COMMAND" in
 
     run)
         resolve_image; resolve_code
-
-        CORES="$(setting "$CORES" machine cores)"
-        MEM_GB="$(setting "$MEM_GB" machine mem_gb)"
-        [[ "$CORES"  =~ ^[0-9]+$ && "$CORES"  -ge 1 ]] || die "--cores must be a whole number >= 1 (got '$CORES')"
-        [[ "$MEM_GB" =~ ^[0-9]+$ && "$MEM_GB" -ge 1 ]] || die "--mem-gb must be a whole number of GB >= 1 (got '$MEM_GB')"
-
-        HOST_CORES="$(nproc)"
-        HOST_MEM_GB="$(awk '/^MemTotal:/ { printf "%d", $2 / 1024 / 1024 }' /proc/meminfo)"
-        [[ "$CORES"  -le "$HOST_CORES" ]]  || die "--cores $CORES is more than this machine has ($HOST_CORES)"
-        [[ "$MEM_GB" -le "$HOST_MEM_GB" ]] || die "--mem-gb $MEM_GB is more than this machine has ($HOST_MEM_GB GB)"
-
+        check_limits
         build_mounts
         echo "Image           : ${IMAGE}  (code from ${MODE}: ${CODE_HOME})"
         echo "Container limits: ${CORES} cores, ${MEM_GB} GB RAM (hard)"
@@ -229,7 +241,24 @@ case "$COMMAND" in
             --cores "$CORES" --mem-gb "$MEM_GB" "${RUN_ARGS[@]}"
         ;;
 
+    resources)
+        resolve_image; resolve_code
+        check_limits
+        [[ -n "$RESOURCES_DIR" ]] || die "resources needs --resources-dir: the folder to fill"
+        mkdir -p "$(absolute "$RESOURCES_DIR")" || die "cannot create resources folder: $RESOURCES_DIR"
+        # Without --targets the folder serves WGS runs only (gene panel from exons)
+        if [[ -n "$TARGETS" ]]; then
+            [[ -f "$TARGETS" ]] || die "targets BED not found: $TARGETS"
+            EXTRA_MOUNTS+=( "$(dirname "$(absolute "$TARGETS")")" )
+        fi
+        build_mounts
+        echo "Image           : ${IMAGE}  (code from ${MODE}: ${CODE_HOME})"
+        echo "Container limits: ${CORES} cores, ${MEM_GB} GB RAM (hard)"
+        docker_run "$CORES" "$MEM_GB" python "${CODE_HOME}/workflow/scripts/get_resources.py" \
+            --cores "$CORES" --mem-gb "$MEM_GB" "${RUN_ARGS[@]}"
+        ;;
+
     *)
-        die "unknown command '$COMMAND'. Use: samplesheet, run, shell, build (or --help)"
+        die "unknown command '$COMMAND'. Use: samplesheet, run, resources, shell, build (or --help)"
         ;;
 esac

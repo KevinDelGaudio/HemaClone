@@ -5,9 +5,12 @@ change to calls or classification bumps at least MINOR; a change that leaves
 every output identical is a PATCH. The version in `VERSION`, the git tag
 `vX.Y.Z` and the Docker image tag `hemaclone:X.Y.Z` always match.
 
-## [Unreleased]
+## [1.6.0] - 2026-11-20
 
-Changes merged into `release/1.6.0`.
+Calls change: new strand-bias, indel and repeat-indel criteria, and the GATK
+hg38 reference with its ALT contig list. Re-run the resources command for an
+existing resources folder (it adds the new files), and re-run projects from
+the start to compare with 1.5.0 results.
 
 ### Added
 - CI on pull requests and pushes to `main` and release branches
@@ -17,12 +20,143 @@ Changes merged into `release/1.6.0`.
 - Image published to `ghcr.io/kevindelgaudio/hemaclone:<VERSION>` when a GitHub
   release is published (`.github/workflows/release.yml`); the release stops if
   its tag is not `v<VERSION>`.
+- Benchmarks for `pon_annotate`, `gnomad_annotate`, `multiqc`, `qc_flags`,
+  `chip_sample` and `chip_cohort`: every rule now records runtime and memory.
+- `bash hemaclone.sh resources --resources-dir DIR --targets KIT.bed`
+  (`workflow/scripts/get_resources.py`): downloads the GATK hg38 reference
+  bundle and somatic resources (resuming, checked against the server's size and
+  MD5), saves the ALT contig list for alt-aware bwa-mem2 mapping, builds the
+  bwa-mem2 index, gets the Funcotator somatic data sources, converts the kit
+  BED to an interval list and builds the CH gene panel BED (genes in
+  `resources.panel_genes` from the Funcotator GENCODE annotation, intersected
+  with the kit targets, padded by `resources.panel_padding`). Writes
+  `MANIFEST.tsv`. New config sections `resources` and `reference_checks`.
+  Without `--targets` the folder serves WGS runs: no exome interval list, and
+  the panel is the genes' exons, padded the same way.
+- Preflight stops a run whose reference has ALT or fix-patch contigs but no
+  `<FASTA>.alt` (reads in the duplicated regions would get mapping quality 0);
+  `reference_checks.allow_alt_without_index` allows it, with a warning.
+- Three CHIP criteria (calls change):
+  - `pass_strand`: strand odds ratio at most `chip.max_sor` (3), from Mutect2
+    `FORMAT/SB`; new columns `sb_ref_fwd`, `sb_ref_rev`, `sb_alt_fwd`,
+    `sb_alt_rev`, `sor`.
+  - `pass_repeat_indel`: an indel flagged `STR` by Mutect2 or in the GIAB
+    tandem-repeat and homopolymer BED (`reference.repeats_bed`) needs VAF at
+    least `chip.repeat_indel_min_vaf` (0.05) and at least
+    `chip.repeat_indel_min_alt_reads` (5) alt reads; new columns `is_indel`,
+    `in_str`, `in_giab_repeat`, `in_repeat`.
+  - `pass_indel`: thresholds for all indels, `chip.indel_min_vaf` and
+    `chip.indel_min_alt_reads`, equal to the general ones by default.
+  - A specific indel threshold below the general floor has no effect (the
+    higher applies) and is noted in the preflight log.
+- `chip/chip_filter_counts.tsv`: per criterion, calls failing it and calls
+  failing only it.
+- The resources command downloads the GIAB BED (`resources.repeats_url`) and
+  saves it bgzipped and indexed; existing resources folders need the command
+  run again (it only adds the new file).
+- WGS mode, `--data-type wgs` (`data_type`): BQSR fitted on
+  `reference.wgs_intervals` (GATK WGS calling regions); the recalibrated BAM
+  keeps only the gene panel and the common sites used for contamination,
+  padded by `tool_params.apply_bqsr.wgs_padding` (150); the duplicate-marked
+  BAM is temporary; CollectWgsMetrics replaces CollectHsMetrics, with WGS QC
+  flags and thresholds (`qc.thresholds_wgs`); the exome interval list is not
+  required. A WGS run must set `ch_filter.min_dp` and `ch_filter.min_vaf` at
+  launch. WES runs are unchanged (same planned jobs and commands).
+- BAM and CRAM input: `<sample>.bam`/`.cram` in the FASTQ folder become one
+  unit each (sample sheet column `bam`); `bam_check` (samtools quickcheck) in
+  the runner's input check; `bam_remap` re-aligns the read pairs (samtools
+  collate | fastq with original qualities from OQ | bwa-mem2 -p | sort),
+  streamed; CRAM needs `input.cram_reference`. Library from the header; a
+  header SM different from the file name is a warning. FastQC runs on FASTQ
+  units only. FASTQ-only runs unchanged (same planned jobs and commands);
+  sheets without a `bam` column still load.
+- The memory-budget preflight check covers only the jobs a run can use (the
+  BAM/CRAM rules with BAM/CRAM units, the coverage metrics of the data type),
+  so an unused job's size never stops a run.
+- Sex and sample identity check with somalier 0.3.1, in its own environment
+  in the image (`workflow/docker/somalier.yaml`; the main tools are
+  unchanged): `somalier_extract` per sample inside its batch,
+  `somalier_relate` over the cohort (`qc/somalier/`). `qc_flags.tsv` gains
+  `x_depth_ratio`, `y_depth_ratio`, `inferred_sex`, `related_samples` and the
+  flags `POSSIBLE_DUPLICATE` (relatedness >= `qc.min_relatedness_flag`, 0.8)
+  and `SEX_MISMATCH` (with `qc.sex_y_ratio_male` and `qc.expected_sex`). The
+  resources command downloads the somalier hg38 sites. A sample counts as
+  finished once its somalier extract exists.
+- CH report rendered at the end of a run: cohort rule `ch_report`
+  (`workflow/rules/report.smk`, `workflow/scripts/render_report.R`) writes
+  `reports/ch_report.html` and `reports/results/*.csv`, with R 4.5.1 and
+  maftools 2.26.0 from their own environment in the image
+  (`workflow/docker/report.yaml`; the main tools are unchanged). New `report`
+  block: `report.enabled`, `report.ch_rmd` (a user-modified copy of the Rmd),
+  `report.exclude_samples` (samples left out of the report only; `chip/`
+  keeps every sample). A failed render leaves the other outputs in place and
+  is reported by the runner. `tests/report_test.py` renders it in CI on a
+  synthetic cohort.
+- QC report (`reports/qc_report.html`, rule `qc_report`): coverage against
+  `ch_filter.min_dp`, breadth, duplicates, insert size, contamination, X and Y
+  depth ratios, pairwise relatedness and input type for every sample, excluded
+  samples marked; tables `reports/results/qc_summary.csv` and
+  `qc_related_pairs.csv`.
+- Methods record (`reports/methods_report.html`, rules `tool_versions` and
+  `methods_report`): workflow version and command, pinned and installed
+  versions of every package in the image, R package versions, the resources
+  manifest with sources and MD5, the reference files used, every setting.
+- CH report: sections on strand bias (SOR), indels in repeats and calls per
+  sample; the methods text covers BAM/CRAM input, the data type and the
+  strand-bias, indel and repeat-indel criteria with their thresholds.
+- `report.qc_rmd` and `report.methods_rmd`, as `report.ch_rmd`.
+- `tests/chip_sample_test.py`: classification of a synthetic sample, one call
+  per case, run in CI inside the image.
+- CI builds a resources folder from a tiny bundle with the real tools
+  (`tests/resources_test.sh`) and runs the dry runs on it.
+- `tests/compare_outputs.sh OLD_PROJECT NEW_PROJECT`: compares the VCF, MAF,
+  CHIP and QC-flag records of two runs, skipping header lines with dates and
+  versions.
 
 ### Changed
 - `pyyaml` pinned in `workflow/docker/environment.yaml`, to the version already
   in the 1.5.0 image; environment renamed `hemaclone`. Tools unchanged.
 - `CONTRIBUTING.md`: release-branch process; within-cohort recurrence described
   as a design choice (each sample classified independently), not a gap.
+- Code clean-up, outputs identical (same planned jobs and shell commands; same
+  classification tables on a test case):
+  - `chip_sample.py`, `chip_cohort.py`, `qc_flags.py` write the error that
+    stops them to the rule log (Snakemake does not capture a script's stderr
+    there), and close their logs on every exit.
+  - Environment variable `CHIP_MODE` renamed `HEMACLONE_MODE` (the recorded
+    `workflow.mode` setting is unchanged).
+  - `filtered_vcf()` moved to `common.smk` with the other helpers; file names
+    built with f-strings.
+  - `markdup` builds its `-I` arguments from its inputs.
+  - Launcher help printed up to the end of the header comment instead of fixed
+    line numbers.
+  - `run_batches.py` runs the preflight checks once on the full sample sheet
+    before the first batch and stops the run if they fail. Before, a missing
+    resource marked every sample as failed with a misleading "FASTQ check
+    failed" reason, batch after batch.
+- Snakemake lint is blocking in CI (the per-rule container lint is ignored).
+- `analysis/ch_analysis.Rmd` moved to `workflow/report/ch_report.Rmd` and
+  rendered by the workflow; the author line is `HemaClone <VERSION>`; CSV
+  exports go to `reports/results/`. Analysis unchanged.
+
+### Removed
+- `analysis/exclude_samples.sh`, replaced by `report.exclude_samples`.
+
+### Fixed
+- The sample sheet builder rejected `.fq.gz` files as unrecognised names,
+  although the rest of the workflow accepts them; the synthetic CI project now
+  has one `.fq.gz` sample.
+- MultiQC kept the `.wgs_metrics` suffix in WGS sample names; its title no
+  longer says exome only.
+- The resources command failed with a raw error when a download had finished
+  but was interrupted before its rename (a range request past the end), and
+  printed a traceback on network errors; it now completes the rename, or stops
+  with a message to re-run, which resumes.
+- A reference setting set to null (e.g. `--set reference.wgs_intervals=null`)
+  stopped the run with a Python error; preflight now names the setting.
+- A `--settings` file outside the project folder was not visible in the
+  container; the launcher now mounts its folder.
+- `--cohort-only` now also reports a CH report that failed to render.
 
 ## [1.5.0]
 

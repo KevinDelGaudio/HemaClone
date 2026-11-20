@@ -50,17 +50,67 @@ rule bwa_map:
         " 2> {log}"
 
 
+# BAM/CRAM units. Integrity (header and end-of-file marker), checked by the
+# batch runner first, like the FASTQ check. -u: unaligned BAMs, which list no
+# reference sequences, are valid input.
+rule bam_check:
+    input:
+        lambda wc: unit_row(wc.sample, wc.unit)["bam"],
+    output:
+        "qc/bam_check/{sample}.{unit}.ok",
+    threads: threads_of("bam_check")
+    resources:
+        mem_mb = mem_of("bam_check"),
+    log: "logs/bam_check/{sample}.{unit}.log"
+    benchmark: "benchmarks/bam_check/{sample}.{unit}.tsv"
+    shell:
+        "( samtools quickcheck -v -u {input} && touch {output} ) > {log} 2>&1"
+
+
+# Re-alignment of a BAM/CRAM unit, streamed: reads grouped by name, written
+# as interleaved pairs (original qualities from OQ when present; secondary,
+# supplementary and unpaired reads dropped, mate-less reads counted in the log), mapped like
+# FASTQ input. A file without read pairs fails.
+rule bam_remap:
+    input:
+        lambda wc: unit_row(wc.sample, wc.unit)["bam"],
+    output:
+        temp("bam/units/{sample}.{unit}.remapped.bam"),
+    params:
+        bwa = TOOLS["bwa"],
+        ref = REF["fasta"],
+        cram_ref = f"--reference {CRAM_REFERENCE}" if CRAM_REFERENCE else "",
+        rg = lambda wc: read_group(wc.sample, wc.unit),
+        collate_tmp = lambda wc: os.path.join(config["tmpdir"], f"{wc.sample}.{wc.unit}.collate"),
+        sort_mem = TP["bam_remap"]["sort_mem_per_thread"],
+        sort_tmp = lambda wc: os.path.join(config["tmpdir"], f"{wc.sample}.{wc.unit}.sort"),
+        extra = TP["bam_remap"]["extra"],
+    threads: threads_of("bam_remap")
+    resources:
+        mem_mb = mem_of("bam_remap"),
+    log: "logs/bam_remap/{sample}.{unit}.log"
+    benchmark: "benchmarks/bam_remap/{sample}.{unit}.tsv"
+    shell:
+        "( samtools collate -u -O -@ {threads} {params.cram_ref} {input} {params.collate_tmp}"
+        " | samtools fastq -O -n -s /dev/null -0 /dev/null -@ {threads} -"
+        " | {params.bwa} mem -p -t {threads} {params.extra} -R '{params.rg}' {params.ref} -"
+        " | samtools view -u -@ {threads} -"
+        " | samtools sort -@ {threads} -m {params.sort_mem} -T {params.sort_tmp} -o {output} -"
+        " && reads=$(samtools view -c {output})"
+        " && if [ \"$reads\" -eq 0 ]; then echo 'ERROR: no read pairs to re-align' >&2; exit 1; fi"
+        " ) 2> {log}"
+
+
 rule markdup:
     input:
-        lambda wc: expand("bam/units/{sample}.{unit}.sorted.bam",
-                          sample=wc.sample, unit=units_of(wc.sample)),
+        lambda wc: [unit_alignment(wc.sample, unit) for unit in units_of(wc.sample)],
+    # WGS: deleted once QC and BQSR have read it (about 100 GB per 30x sample)
     output:
-        bam = "bam/{sample}.markdup.bam",
-        bai = "bam/{sample}.markdup.bai",
+        bam = temp("bam/{sample}.markdup.bam") if WGS else "bam/{sample}.markdup.bam",
+        bai = temp("bam/{sample}.markdup.bai") if WGS else "bam/{sample}.markdup.bai",
         metrics = "qc/markdup/{sample}.dup_metrics.txt",
     params:
-        inputs = lambda wc: " ".join(f"-I bam/units/{wc.sample}.{u}.sorted.bam"
-                                     for u in units_of(wc.sample)),
+        inputs = lambda wc, input: " ".join(f"-I {bam}" for bam in input),
         java = java_opts,
         tmp = config["tmpdir"],
         extra = TP["markdup"]["extra"],

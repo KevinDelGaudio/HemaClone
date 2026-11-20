@@ -18,7 +18,7 @@ TIER_VCF = {
 rule gnomad_annotate:
     input:
         vcf = lambda wc: TIER_VCF[wc.tier].format(sample=wc.sample),
-        tbi = lambda wc: TIER_VCF[wc.tier].format(sample=wc.sample) + ".tbi",
+        tbi = lambda wc: f"{TIER_VCF[wc.tier].format(sample=wc.sample)}.tbi",
         gnomad = REF["gnomad"],
     output:
         vcf = "vcf/gnomad/{sample}.{tier}.vcf.gz",
@@ -27,6 +27,7 @@ rule gnomad_annotate:
     resources:
         mem_mb = mem_of("gnomad_annotate"),
     log: "logs/gnomad_annotate/{sample}_{tier}.log"
+    benchmark: "benchmarks/gnomad_annotate/{sample}_{tier}.tsv"
     shell:
         "( bcftools annotate -a {input.gnomad} -c INFO/GNOMAD_AF:=INFO/AF"
         " -Oz -o {output.vcf} {input.vcf}"

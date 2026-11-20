@@ -1,6 +1,7 @@
 # =============================================================================
-# QC: FastQC per FASTQ, samtools and Picard metrics per sample BAM,
-# MultiQC report and per-sample threshold flags over the whole sheet.
+# QC: FastQC per FASTQ, samtools and Picard metrics per sample BAM (capture
+# metrics for WES, genome-wide coverage for WGS), MultiQC report and
+# per-sample threshold flags over the whole sheet.
 # =============================================================================
 
 rule fastqc:
@@ -120,25 +121,101 @@ rule hs_metrics:
         " > {log} 2>&1"
 
 
+rule wgs_metrics:
+    input:
+        bam = "bam/{sample}.markdup.bam",
+        bai = "bam/{sample}.markdup.bai",
+    output:
+        "qc/bam/{sample}.wgs_metrics.txt",
+    params:
+        java = java_opts,
+        ref = REF["fasta"],
+        intervals = REF["wgs_intervals"],
+        coverage_cap = TP["wgs_metrics"]["coverage_cap"],
+        min_mapq = TP["wgs_metrics"]["min_mapq"],
+        min_baseq = TP["wgs_metrics"]["min_baseq"],
+    threads: threads_of("wgs_metrics")
+    resources:
+        mem_mb = mem_of("wgs_metrics"),
+    log: "logs/wgs_metrics/{sample}.log"
+    benchmark: "benchmarks/wgs_metrics/{sample}.tsv"
+    shell:
+        "gatk --java-options '{params.java}' CollectWgsMetrics"
+        " -I {input.bam}"
+        " -R {params.ref}"
+        " --INTERVALS {params.intervals}"
+        " -O {output}"
+        " --COVERAGE_CAP {params.coverage_cap}"
+        " --MINIMUM_MAPPING_QUALITY {params.min_mapq}"
+        " --MINIMUM_BASE_QUALITY {params.min_baseq}"
+        " --VALIDATION_STRINGENCY LENIENT"
+        " > {log} 2>&1"
+
+
+# Sex and sample identity (somalier): allele counts at known polymorphic sites
+# per sample, read from the duplicate-marked BAM inside the sample's batch
+# (in WGS that BAM is deleted afterwards), then relatedness over the cohort.
+rule somalier_extract:
+    input:
+        bam = "bam/{sample}.markdup.bam",
+        bai = "bam/{sample}.markdup.bai",
+    output:
+        "qc/somalier/extract/{sample}.somalier",
+    params:
+        somalier = TOOLS["somalier"],
+        sites = REF["somalier_sites"],
+        ref = REF["fasta"],
+    threads: threads_of("somalier_extract")
+    resources:
+        mem_mb = mem_of("somalier_extract"),
+    log: "logs/somalier_extract/{sample}.log"
+    benchmark: "benchmarks/somalier_extract/{sample}.tsv"
+    shell:
+        # somalier names the output after the read group SM tag, which is the sample
+        "{params.somalier} extract -d qc/somalier/extract --sites {params.sites}"
+        " -f {params.ref} {input.bam} > {log} 2>&1"
+
+
+rule somalier_relate:
+    input:
+        expand("qc/somalier/extract/{sample}.somalier", sample=SAMPLES),
+    output:
+        samples = "qc/somalier/relate.samples.tsv",
+        pairs = "qc/somalier/relate.pairs.tsv",
+        html = "qc/somalier/relate.html",
+    params:
+        somalier = TOOLS["somalier"],
+    threads: threads_of("somalier_relate")
+    resources:
+        mem_mb = mem_of("somalier_relate"),
+    log: "logs/somalier_relate/somalier_relate.log"
+    benchmark: "benchmarks/somalier_relate/somalier_relate.tsv"
+    shell:
+        "{params.somalier} relate --output-prefix qc/somalier/relate {input} > {log} 2>&1"
+
+
 rule multiqc:
     input:
         fastqc = expand("qc/fastqc/{fq}_fastqc.zip", fq=FASTQ_BY_BASE),
         samtools = expand("qc/bam/{sample}.stats.txt", sample=SAMPLES),
         alignment = expand("qc/bam/{sample}.alignment_summary_metrics.txt", sample=SAMPLES),
         insert_size = expand("qc/bam/{sample}.insert_size_metrics.txt", sample=SAMPLES),
-        hs = expand("qc/bam/{sample}.hs_metrics.txt", sample=SAMPLES),
+        coverage = expand("qc/bam/{sample}.{metrics}.txt", sample=SAMPLES, metrics=COVERAGE_METRICS),
         dup = expand("qc/markdup/{sample}.dup_metrics.txt", sample=SAMPLES),
         config = MULTIQC_CONFIG,
     output:
         "qc/multiqc/chip_qc.html",
     params:
         run = QC_RUN,
+        # FastQC runs on FASTQ units only: no qc/fastqc when every unit is BAM/CRAM
+        dirs = "qc/fastqc qc/bam qc/markdup" if FASTQ_BY_BASE else "qc/bam qc/markdup",
     threads: threads_of("multiqc")
     resources:
         mem_mb = mem_of("multiqc"),
     log: "logs/multiqc/multiqc.log"
+    benchmark: "benchmarks/multiqc/multiqc.tsv"
     shell:
-        "{params.run} multiqc qc/fastqc qc/bam qc/markdup"
+        "{params.run} multiqc {params.dirs}"
         " --config {input.config}"
         " --outdir qc/multiqc"
         " --filename chip_qc"
@@ -149,17 +226,23 @@ rule multiqc:
 
 rule qc_flags:
     input:
-        hs = expand("qc/bam/{sample}.hs_metrics.txt", sample=SAMPLES),
+        coverage = expand("qc/bam/{sample}.{metrics}.txt", sample=SAMPLES, metrics=COVERAGE_METRICS),
         insert_size = expand("qc/bam/{sample}.insert_size_metrics.txt", sample=SAMPLES),
         dup = expand("qc/markdup/{sample}.dup_metrics.txt", sample=SAMPLES),
+        relate_samples = "qc/somalier/relate.samples.tsv",
+        relate_pairs = "qc/somalier/relate.pairs.tsv",
     output:
         "qc/qc_flags.tsv",
     params:
         samples = SAMPLES,
-        thresholds = config["qc"]["thresholds"],
+        data_type = DATA_TYPE,
+        identity = {key: config["qc"][key] for key in
+                    ["min_relatedness_flag", "min_relatedness_list", "sex_y_ratio_male", "expected_sex"]},
+        thresholds = config["qc"]["thresholds_wgs"] if WGS else config["qc"]["thresholds"],
     threads: threads_of("qc_flags")
     resources:
         mem_mb = mem_of("qc_flags"),
     log: "logs/qc_flags/qc_flags.log"
+    benchmark: "benchmarks/qc_flags/qc_flags.tsv"
     script:
         "../scripts/qc_flags.py"

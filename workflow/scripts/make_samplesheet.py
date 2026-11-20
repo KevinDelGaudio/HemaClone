@@ -2,13 +2,18 @@
 """
 Build the sample sheet (config/samples.tsv) from a folder of paired FASTQ files.
 
-Recognised file name patterns:
+Recognised file name patterns (.fastq.gz or .fq.gz):
   <sample>_S<n>_L<lane>_R<1|2>_001.fastq.gz   lane-split Illumina output
   <sample>_S<n>_R<1|2>_001.fastq.gz           Illumina output without lane splitting
   <sample>_R<1|2>.fastq.gz                    renamed files
 
 Each R1/R2 pair is one "unit". Units sharing the same <sample> are aligned
 separately (one read group each) and merged into one BAM at duplicate marking.
+
+BAM and CRAM files in the same folder (<sample>.bam, <sample>.cram), aligned
+or not, are one unit each (unit B1): their reads are re-aligned. The sample
+name comes from the file name; the library (LB) from the header when it has a
+single one. Their rows have the path in the bam column and empty fq1/fq2.
 
 Usage (from the project root):
   python workflow/scripts/make_samplesheet.py --fastq-dir fastq --out config/samples.tsv
@@ -19,16 +24,20 @@ import csv
 import gzip
 import os
 import re
+import shutil
+import subprocess
 import sys
 from collections import defaultdict
 
 PATTERNS = [
-    ("lane_split", re.compile(r"^(?P<sample>.+?)_S(?P<snum>\d+)_L(?P<lane>\d+)_R(?P<read>[12])_001\.fastq\.gz$")),
-    ("illumina", re.compile(r"^(?P<sample>.+?)_S(?P<snum>\d+)_R(?P<read>[12])_001\.fastq\.gz$")),
-    ("plain", re.compile(r"^(?P<sample>.+?)_R(?P<read>[12])\.fastq\.gz$")),
+    ("lane_split", re.compile(r"^(?P<sample>.+?)_S(?P<snum>\d+)_L(?P<lane>\d+)_R(?P<read>[12])_001\.f(ast)?q\.gz$")),
+    ("illumina", re.compile(r"^(?P<sample>.+?)_S(?P<snum>\d+)_R(?P<read>[12])_001\.f(ast)?q\.gz$")),
+    ("plain", re.compile(r"^(?P<sample>.+?)_R(?P<read>[12])\.f(ast)?q\.gz$")),
 ]
 NAME_PATTERN = re.compile(r"^[A-Za-z0-9_-]+$")
-COLUMNS = ["sample", "unit", "fq1", "fq2", "flowcell", "lane", "barcode", "rg_id", "rg_pu", "lb", "pattern"]
+COLUMNS = ["sample", "unit", "fq1", "fq2", "flowcell", "lane", "barcode", "rg_id", "rg_pu", "lb", "pattern", "bam"]
+ALIGNED_SUFFIXES = (".bam", ".cram")
+ALIGNED_UNIT = "B1"
 
 
 def parse_args():
@@ -88,6 +97,63 @@ def parse_casava(header):
     return flowcell, lane, barcode
 
 
+def header_read_groups(path):
+    """SM, LB and PL values of the @RG lines of a BAM or CRAM header."""
+    result = subprocess.run(["samtools", "view", "-H", path], capture_output=True, text=True)
+    if result.returncode != 0:
+        raise ValueError(result.stderr.strip() or "samtools view -H failed")
+    values = {"SM": set(), "LB": set(), "PL": set()}
+    for line in result.stdout.splitlines():
+        if line.startswith("@RG"):
+            for field in line.split("\t")[1:]:
+                key, _, value = field.partition(":")
+                if key in values:
+                    values[key].add(value)
+    return values
+
+
+def aligned_rows(fastq_dir, files, errors, warnings):
+    """One sample sheet row per BAM or CRAM file."""
+    rows = []
+    if files and shutil.which("samtools") is None:
+        errors.append("samtools not found on PATH: needed to read BAM/CRAM headers "
+                      "(run through hemaclone.sh, which uses the image)")
+        return rows
+    for filename in files:
+        sample, suffix = os.path.splitext(filename)
+        path = os.path.join(fastq_dir, filename)
+        try:
+            groups = header_read_groups(path)
+        except ValueError as exc:
+            errors.append(f"cannot read the header of {filename}: {exc}")
+            continue
+        if groups["SM"] and groups["SM"] != {sample}:
+            warnings.append(f"{filename}: header SM {sorted(groups['SM'])} differs from the file name; "
+                            f"the sample is named {sample}")
+        if len(groups["LB"]) == 1:
+            library = next(iter(groups["LB"]))
+        else:
+            library = f"{sample}_lib1"
+            if len(groups["LB"]) > 1:
+                warnings.append(f"{filename}: {len(groups['LB'])} libraries in the header; treated as one "
+                                f"({library}), so duplicates are marked across them")
+        rows.append({
+            "sample": sample,
+            "unit": ALIGNED_UNIT,
+            "fq1": "",
+            "fq2": "",
+            "flowcell": "NA",
+            "lane": "NA",
+            "barcode": "NA",
+            "rg_id": f"{sample}.{ALIGNED_UNIT}",
+            "rg_pu": f"{sample}.{ALIGNED_UNIT}",
+            "lb": library,
+            "pattern": suffix.lstrip("."),
+            "bam": path,
+        })
+    return rows
+
+
 def main():
     args = parse_args()
     errors = []
@@ -99,7 +165,9 @@ def main():
         sys.exit(f"ERROR: {args.out} already exists. Review it, or pass --force to overwrite.")
 
     files = sorted(f for f in os.listdir(args.fastq_dir) if f.endswith((".fastq.gz", ".fq.gz")))
+    aligned_files = sorted(f for f in os.listdir(args.fastq_dir) if f.endswith(ALIGNED_SUFFIXES))
     print(f"FASTQ files found: {len(files)}")
+    print(f"BAM/CRAM files found: {len(aligned_files)}")
 
     # (sample, unit) -> {"R1": path, "R2": path, "kind": ..., "file_lane": ...}
     units = defaultdict(dict)
@@ -127,7 +195,12 @@ def main():
         print(f"Skipped Undetermined files: {len(skipped)}")
 
     # ---- name checks ---------------------------------------------------
-    sample_names = sorted({sample for sample, _ in units})
+    aligned_samples = [os.path.splitext(f)[0] for f in aligned_files]
+    for sample in sorted({s for s, _ in units} & set(aligned_samples)):
+        errors.append(f"sample {sample} has both FASTQ and BAM/CRAM files")
+    for sample in sorted({s for s in aligned_samples if aligned_samples.count(s) > 1}):
+        errors.append(f"sample {sample} has both a BAM and a CRAM file")
+    sample_names = sorted({sample for sample, _ in units} | set(aligned_samples))
     for sample in sample_names:
         if not NAME_PATTERN.match(sample):
             errors.append(f"sample name has characters outside [A-Za-z0-9_-]: {sample}")
@@ -186,7 +259,10 @@ def main():
             "rg_pu": f"{flowcell}.{lane}.{barcode}",
             "lb": f"{sample}_lib1",
             "pattern": entry["kind"],
+            "bam": "",
         })
+
+    rows += aligned_rows(args.fastq_dir, aligned_files, errors, warnings)
 
     # ---- read group IDs must be unique within a sample ----------------
     seen_rg = defaultdict(list)

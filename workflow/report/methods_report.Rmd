@@ -1,0 +1,184 @@
+---
+title: "Methods Record"
+author: "HemaClone `r params$workflow_version`"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    number_sections: true
+params:
+  project_dir: ""
+  results_dir: "results"
+  exclude_samples: ""
+  workflow_version: ""
+---
+
+# Overview
+
+What a methods section or a reproduction needs: the workflow version and the
+command of the run, the version of every tool, the reference files with their
+sources and checksums, and every setting applied. The values come from the
+settings the workflow recorded for the run (`logs/batches/`), the tool
+environments of the image and the manifest of the resources folder.
+
+```{r setup, include=FALSE}
+library(dplyr)
+library(yaml)
+
+PROJECT_DIR <- params$project_dir
+RESULTS_DIR <- params$results_dir
+if (!nzchar(PROJECT_DIR) || !dir.exists(file.path(PROJECT_DIR, "logs", "batches"))) {
+  stop("Set project_dir to the project folder holding logs/batches/: ", PROJECT_DIR)
+}
+
+knitr::opts_knit$set(root.dir = PROJECT_DIR)
+knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = FALSE)
+```
+
+```{r inputs}
+# Most recent real run (not a dry run) with a complete record
+settings_files <- sort(list.files("logs/batches", pattern = "^run_.*_settings\\.yaml$",
+                                  full.names = TRUE))
+settings_list <- lapply(settings_files, yaml::read_yaml)
+usable <- vapply(settings_list,
+                 function(s) !is.null(s$chip) && !isTRUE(s$run$dry_run),
+                 logical(1))
+if (!any(usable)) stop("No run settings with a chip block in logs/batches/")
+settings      <- settings_list[[max(which(usable))]]
+settings_file <- settings_files[[max(which(usable))]]
+
+tools_file <- "reports/results/tool_versions.tsv"
+if (!file.exists(tools_file)) stop("Tool versions not found: ", tools_file)
+tools <- read.delim(tools_file, stringsAsFactors = FALSE, colClasses = "character")
+
+# Every leaf of a nested list as one row: dotted key, value
+flatten <- function(x, prefix = "") {
+  rows <- list()
+  for (key in names(x)) {
+    name <- if (nzchar(prefix)) paste0(prefix, ".", key) else key
+    value <- x[[key]]
+    if (is.list(value) && !is.null(names(value))) {
+      rows[[length(rows) + 1]] <- flatten(value, name)
+    } else {
+      text <- if (is.null(value)) "null" else paste(unlist(value), collapse = ", ")
+      rows[[length(rows) + 1]] <- data.frame(setting = name, value = text)
+    }
+  }
+  if (length(rows) == 0) return(data.frame(setting = character(0), value = character(0)))
+  do.call(rbind, rows)
+}
+```
+
+# Run
+
+```{r run}
+n_samples <- if (file.exists(settings$samples)) {
+  length(unique(read.delim(settings$samples, colClasses = "character")$sample))
+} else {
+  NA
+}
+run <- data.frame(
+  item = c("workflow version", "image", "code", "git commit", "data type", "samples",
+           "machine limits", "settings record", "command"),
+  value = c(
+    settings$workflow$version,
+    settings$workflow$image,
+    paste0(settings$workflow$code, " (", settings$workflow$mode, ")"),
+    if (is.null(settings$workflow$git_commit)) "-" else settings$workflow$git_commit,
+    toupper(settings$data_type),
+    n_samples,
+    paste0(settings$machine$cores, " cores, ", settings$machine$mem_gb, " GB"),
+    basename(settings_file),
+    settings$run$command
+  )
+)
+run
+```
+
+# Tools
+
+Pinned versions, from the environment files the image is built from, and the
+versions installed in the image. Programs in the base environment run the
+workflow steps; somalier and R run from their own environments.
+
+```{r tools}
+differing <- tools %>%
+  dplyr::filter(installed != "not found", installed != pinned,
+                !startsWith(installed, paste0(pinned, ".")))
+if (nrow(differing) > 0) {
+  message("Installed versions that differ from the pins: ",
+          paste(differing$environment, differing$package, collapse = ", "))
+}
+tools
+```
+
+R packages loaded by the reports:
+
+```{r r_packages}
+packages <- c("maftools", "ggplot2", "dplyr", "tidyr", "rmarkdown", "knitr", "yaml")
+data.frame(package = c("R", packages),
+           version = c(paste(R.version$major, R.version$minor, sep = "."),
+                       vapply(packages, function(p) as.character(packageVersion(p)), character(1))))
+```
+
+# Reference files
+
+Files of the resources folder (`reference.dir`), as recorded in its
+`MANIFEST.tsv` by `hemaclone.sh resources`: source, size, MD5 and date.
+
+```{r resources}
+manifest_file <- file.path(settings$reference$dir, "MANIFEST.tsv")
+manifest <- data.frame()
+if (file.exists(manifest_file)) {
+  manifest <- read.delim(manifest_file, stringsAsFactors = FALSE, colClasses = "character")
+  manifest
+} else {
+  message("No MANIFEST.tsv in ", settings$reference$dir,
+          ": the folder was not built by hemaclone.sh resources, so sources and checksums are not recorded.")
+}
+```
+
+Files used by the run, by setting:
+
+```{r reference_used}
+used <- flatten(settings$reference_resolved, "reference")
+used <- rbind(used, data.frame(setting = "pon.vcf",
+                               value = if (is.null(settings$pon_resolved)) "none" else settings$pon_resolved))
+used$in_manifest <- if (nrow(manifest) > 0) {
+  folder <- paste0(sub("/$", "", settings$reference$dir), "/")
+  vapply(used$value, function(path) {
+    relative <- if (startsWith(path, folder)) substring(path, nchar(folder) + 1) else path
+    relative %in% manifest$file || paste0(relative, "/VERSION") %in% manifest$file
+  }, logical(1), USE.NAMES = FALSE)
+} else {
+  NA
+}
+used
+```
+
+# Settings
+
+Every setting of the run, after the defaults, the `--settings` file, `--set`
+values and launch flags were merged. Sample sheet rows are not listed.
+
+```{r settings}
+skip <- c("samples", "workflow", "run", "reference_resolved", "pon_resolved", "machine")
+all_settings <- flatten(settings[setdiff(names(settings), skip)])
+all_settings
+```
+
+# Export
+
+```{r export}
+dir.create(RESULTS_DIR, showWarnings = FALSE, recursive = TRUE)
+write.csv(run,          file.path(RESULTS_DIR, "methods_run.csv"),       row.names = FALSE)
+write.csv(used,         file.path(RESULTS_DIR, "methods_references.csv"), row.names = FALSE)
+write.csv(all_settings, file.path(RESULTS_DIR, "methods_settings.csv"),  row.names = FALSE)
+```
+
+# Session Info
+
+```{r session}
+sessionInfo()
+```

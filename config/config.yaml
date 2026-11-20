@@ -32,6 +32,32 @@ machine:
 # Each batch runs to completion before the next starts.
 batch_size: 1
 
+# BAM or CRAM input (files in the FASTQ folder, bam column of the sample
+# sheet): reads are extracted, with original qualities from the OQ tag when
+# present, and re-aligned. CRAM needs the FASTA it was written against.
+input:
+  cram_reference: null
+
+# Reports rendered once the cohort is complete, into reports/ (HTML) and
+# reports/results/ (CSV): the CH report, the QC report and the methods record.
+# *_rmd: null = the report shipped with the workflow (workflow/report/); a
+# path = your own copy of it. exclude_samples: a file of sample IDs (one per
+# line) left out of the CH report and marked in the QC report; chip/ keeps
+# every sample.
+report:
+  enabled: true
+  ch_rmd: null
+  qc_rmd: null
+  methods_rmd: null
+  exclude_samples: null
+
+# Sequencing design (flag: --data-type): "wes" or "wgs". WGS fits BQSR on
+# reference.wgs_intervals, writes the recalibrated BAM for the gene panel and
+# the contamination sites only, deletes the duplicate-marked BAM once QC and
+# BQSR are done, and uses CollectWgsMetrics with qc.thresholds_wgs. A WGS run
+# must set ch_filter.min_dp and ch_filter.min_vaf explicitly at launch.
+data_type: "wes"
+
 # Scratch space for sorting and Java temp files (flag: --tmpdir)
 tmpdir: "tmp"
 
@@ -42,15 +68,58 @@ reference:
   dir: "resources"
   fasta: "Homo_sapiens_assembly38.fasta"
   exome_intervals: "exome_targets.hg38.interval_list"
+  # WGS only: BQSR and coverage QC intervals (GATK WGS calling regions)
+  wgs_intervals: "wgs_calling_regions.hg38.interval_list"
   gene_panel_bed: "chip_genes.bed"
   gnomad: "af-only-gnomad.hg38.vcf.gz"
   common_variants: "small_exac_common_3.hg38.vcf.gz"
   dbsnp: "Homo_sapiens_assembly38.dbsnp138.vcf"
   mills: "Mills_and_1000G_gold_standard.indels.hg38.vcf.gz"
   funcotator_ds: "funcotator_dataSources"
+  # GIAB tandem repeats and homopolymers (bgzipped, tabix-indexed), for the
+  # repeat-indel criterion
+  repeats_bed: "GRCh38_AllTandemRepeatsandHomopolymers_slop5.bed.gz"
+  # somalier sites (polymorphic SNPs) for the sex and sample identity check
+  somalier_sites: "sites.hg38.vcf.gz"
+
+# A reference with ALT or fix-patch contigs (names ending in _alt or _fix) needs
+# the ALT contig list <FASTA>.alt next to the bwa-mem2 index: without it, reads
+# in regions those contigs duplicate get mapping quality 0 and are dropped
+# before calling. The run stops in that case unless this is true.
+reference_checks:
+  allow_alt_without_index: false
+
+# Building the resources folder (bash hemaclone.sh resources). Not used by runs.
+resources:
+  # GATK hg38 reference bundle and somatic resources
+  bundle_url: "https://storage.googleapis.com/gcp-public-data--broad-references/hg38/v0"
+  somatic_url: "https://storage.googleapis.com/gatk-best-practices/somatic-hg38"
+  # somalier hg38 sites file, linked from the somalier release notes
+  somalier_sites_url: "https://github.com/brentp/somalier/files/3412456/sites.hg38.vcf.gz"
+  # GIAB genome stratifications (Dwarshuis et al. 2024), tandem repeats and
+  # homopolymers, saved bgzipped and indexed under reference.repeats_bed
+  repeats_url: "https://ftp-trace.ncbi.nlm.nih.gov/ReferenceSamples/giab/release/genome-stratifications/v3.3/GRCh38@all/LowComplexity/GRCh38_AllTandemRepeatsandHomopolymers_slop5.bed.gz"
+  # Exome kit target BED, hg38 with chr names (flag: --targets)
+  targets: null
+  # CH gene panel: gene spans from the Funcotator GENCODE annotation,
+  # intersected with the kit targets, each piece padded by panel_padding bp
+  panel_padding: 50
+  panel_genes: [
+    ASXL1, ASXL2, BCOR, BCORL1, BRAF, BRCC3, CBL, CBLB, CEBPA, CHEK2, CREBBP, CTCF, CUX1,
+    DNMT3A, EED, EP300, ETNK1, ETV6, EZH2, FLT3, GATA1, GATA2, GATA3, GNA13, GNAS, GNB1,
+    IDH1, IDH2, IKZF1, IKZF2, IKZF3, IL18, IL1A, IL1B, IL33, JAK1, JAK2, JAK3, KDM6A, KIT,
+    KMT2A, KMT2D, KRAS, LUC7L2, MPL, NF1, NLRP3, NPM1, NRAS, NXF1, P2RX7, PDS5B, PHF6,
+    PHIP, PPM1D, PRPF8, PTEN, PTPN11, RAD21, RUNX1, SETBP1, SETD2, SETDB1, SF3B1, SMC1A,
+    SMC3, SRCAP, SRSF2, STAG1, STAG2, SUZ12, TET2, TP53, U2AF1, U2AF2, UNK, WT1, YLPM1,
+    ZBTB33, ZNF318, ZRSR2
+  ]
 
 tools:
   bwa: "bwa-mem2.avx2"
+  # Separate environment in the image (workflow/docker/somalier.yaml)
+  somalier: "/opt/conda/envs/somalier/bin/somalier"
+  # R for the reports, separate environment in the image (workflow/docker/report.yaml)
+  rscript: "/opt/conda/envs/report/bin/Rscript"
   # The run stops if `gatk --version` reports a different version. null = no check.
   gatk_version: "4.6.2.0"
 
@@ -91,6 +160,16 @@ chip:
   min_alt_reads: 3
   max_gnomad_af: 0.01
   large_clone_vaf: 0.10
+  # Strand bias: strand odds ratio from FORMAT/SB (GATK formula, +1 per count)
+  max_sor: 3
+  # Indels: thresholds on top of ch_filter.min_vaf and min_alt_reads; can only
+  # be stricter (the defaults change nothing)
+  indel_min_vaf: 0.02
+  indel_min_alt_reads: 3
+  # Indels in a tandem repeat or homopolymer (Mutect2 INFO/STR or the GIAB
+  # repeats BED): stricter thresholds instead of exclusion
+  repeat_indel_min_vaf: 0.05
+  repeat_indel_min_alt_reads: 5
   variant_classes:
     - Missense_Mutation
     - Nonsense_Mutation
@@ -135,10 +214,31 @@ qc:
     min_pct_selected: 0.40
     max_pct_dupe: 0.50
     max_dropout: 10.0
+  # data_type wgs: CollectWgsMetrics over reference.wgs_intervals
+  thresholds_wgs:
+    min_mean_coverage: 25
+    min_pct_20x: 0.80
+    max_pct_dupe: 0.30
+  # Sex and sample identity (somalier). Pairs with relatedness at least
+  # min_relatedness_flag are flagged POSSIBLE_DUPLICATE; pairs at least
+  # min_relatedness_list are listed in related_samples.
+  min_relatedness_flag: 0.8
+  min_relatedness_list: 0.4
+  # Inferred sex: male when the Y/autosome depth ratio is at least this value;
+  # null = ratios reported, no sex inferred (set it from a first cohort run,
+  # where male and female samples form two clusters)
+  sex_y_ratio_male: null
+  # Optional table (sample, sex as male/female), kept on the analysis machine:
+  # samples whose inferred sex differs are flagged SEX_MISMATCH. Needs
+  # sex_y_ratio_male.
+  expected_sex: null
 
 # Tool parameters. "extra" is appended verbatim to the command line.
 tool_params:
   bwa_map:
+    sort_mem_per_thread: "3G"
+    extra: ""
+  bam_remap:
     sort_mem_per_thread: "3G"
     extra: ""
   markdup:
@@ -147,6 +247,9 @@ tool_params:
     extra: ""
   apply_bqsr:
     extra: ""
+    # data_type wgs: bases added around the panel and contamination sites, so
+    # Mutect2 has the reads around its active regions
+    wgs_padding: 150
   mutect2:
     extra: ""
   filter_mutect:
@@ -160,6 +263,10 @@ tool_params:
     min_baseq: 20
   insert_size:
     min_pct: 0.5
+  wgs_metrics:
+    coverage_cap: 250
+    min_mapq: 20
+    min_baseq: 20
 
 # Fraction of a job's memory given to the Java heap (-Xmx)
 java_heap_fraction: 0.85
@@ -170,6 +277,8 @@ java_heap_fraction: 0.85
 job_sizes:
   fastq_check:             {threads: 3, mem_mb: 1000}
   bwa_map:                 {threads: 8, mem_mb: 45000}
+  bam_check:               {threads: 1, mem_mb: 1000}
+  bam_remap:               {threads: 8, mem_mb: 45000}
   markdup:                 {threads: 2, mem_mb: 16000}
   base_recalibrator:       {threads: 2, mem_mb: 12000}
   apply_bqsr:              {threads: 2, mem_mb: 12000}
@@ -189,6 +298,13 @@ job_sizes:
   alignment_summary:       {threads: 1, mem_mb: 8000}
   insert_size:             {threads: 1, mem_mb: 8000}
   hs_metrics:              {threads: 1, mem_mb: 8000}
+  wgs_metrics:             {threads: 1, mem_mb: 8000}
+  somalier_extract:        {threads: 1, mem_mb: 2000}
+  somalier_relate:         {threads: 1, mem_mb: 4000}
+  ch_report:               {threads: 1, mem_mb: 4000}
+  qc_report:               {threads: 1, mem_mb: 4000}
+  tool_versions:           {threads: 1, mem_mb: 1000}
+  methods_report:          {threads: 1, mem_mb: 2000}
   multiqc:                 {threads: 1, mem_mb: 8000}
   qc_flags:                {threads: 1, mem_mb: 1000}
   chip_sample:             {threads: 1, mem_mb: 2000}
