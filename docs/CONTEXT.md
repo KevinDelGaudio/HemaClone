@@ -44,13 +44,14 @@ workflow/docker/somalier.yaml      somalier, own environment
 workflow/docker/report.yaml        R and packages for the reports, own environment
 workflow/rules/               common, mapping, qc, bqsr, calling, annotation, chip, report (.smk)
 workflow/scripts/             make_samplesheet.py, run_batches.py, check_fastq_pair.sh,
-                              qc_flags.py, chip_sample.py, chip_cohort.py, render_report.R
-workflow/report/ch_report.Rmd CH report (maftools), rendered by the ch_report rule
+                              qc_flags.py, chip_sample.py, chip_cohort.py, render_report.R,
+                              tool_versions.py
+workflow/report/              ch_report.Rmd, qc_report.Rmd, methods_report.Rmd (section 8)
 tests/make_fixture.sh         synthetic project (tiny FASTQs, empty resources) for dry runs
 tests/resources_test.sh       builds a resources folder from a tiny bundle inside the image (CI)
 tests/ci_checks.sh            checks run by CI against an image
 tests/compare_outputs.sh      compares the results of two runs (outputs-identical changes)
-tests/report_test.py          renders the CH report on a synthetic cohort inside the image (CI)
+tests/report_test.py          renders the three reports on a synthetic cohort inside the image (CI)
 .github/workflows/ci.yml      CI on pull requests and pushes to main and release branches
 .github/workflows/release.yml image published to GHCR when a release is published
 ```
@@ -70,7 +71,7 @@ input FASTQs; outputs split by type (`bam/`, `bqsr/`, `vcf/`, `orientation/`, `m
   `docker run --rm hemaclone:<version> cat /opt/hemaclone/workflow/hemaclone.sh > hemaclone.sh`
 - Build: `bash workflow/hemaclone.sh build` (adds the proxy build args when needed)
 - Published images: each GitHub release `vX.Y.Z` builds the image and pushes it to `ghcr.io/kevindelgaudio/hemaclone:X.Y.Z`; the release stops if the tag is not `v` + `VERSION`. The launcher expects the local name, so after pulling: `docker tag ghcr.io/kevindelgaudio/hemaclone:X.Y.Z hemaclone:X.Y.Z`
-- CI: every pull request builds the image (tools layer cached) and runs `tests/ci_checks.sh`: script syntax, launcher dry run and whole-graph dry run on a synthetic project, Snakemake lint (blocking; the per-rule container lint is ignored, since the whole workflow runs in one image), classification of synthetic samples, BAM/CRAM re-alignment, somalier, and the CH report rendered on a synthetic cohort. Nothing is aligned or called, so CI catches broken rules, settings and launcher logic, not wrong results
+- CI: every pull request builds the image (tools layer cached) and runs `tests/ci_checks.sh`: script syntax, launcher dry run and whole-graph dry run on a synthetic project, Snakemake lint (blocking; the per-rule container lint is ignored, since the whole workflow runs in one image), classification of synthetic samples, BAM/CRAM re-alignment, somalier, and the three reports rendered on a synthetic cohort. Nothing is aligned or called, so CI catches broken rules, settings and launcher logic, not wrong results
 
 ## 4. Launching
 
@@ -165,7 +166,9 @@ U2AF1 S34/Q157, IDH1 R132, IDH2 R140/R172, GNB1 K57, KRAS and NRAS G12/G13/Q61.
 | `chip/samples/<s>.candidates.tsv`, `<s>.status.tsv` | per-sample tables |
 | `contamination/<s>.contamination.table` | CalculateContamination estimate |
 | `qc/multiqc/chip_qc.html`, `qc/qc_flags.tsv` | QC report and per-sample flags |
-| `reports/ch_report.html` | CH report (section 8) |
+| `reports/ch_report.html`, `reports/qc_report.html`, `reports/methods_report.html` | reports (section 8) |
+| `reports/results/qc_summary.csv`, `qc_related_pairs.csv` | QC report tables: `qc_flags.tsv` plus contamination, input type, units and the `excluded` mark; pairs at or above `qc.min_relatedness_list` |
+| `reports/results/tool_versions.tsv`, `methods_run.csv`, `methods_references.csv`, `methods_settings.csv` | methods record tables |
 | `reports/results/ch_samples.csv`, `ch_calls.csv`, `ch_recurrent_positions.csv`, `ch_filter_summary.csv` | tables of the CH report, without the samples in `report.exclude_samples` |
 
 WGS QC flags (`qc.thresholds_wgs`, columns `mean_coverage`, `pct_20x`, `pct_exc_dupe`, `pct_exc_mapq`, `median_insert_size`, `pct_dup_markdup`): mean coverage at least 25, at least 80% of the calling regions at 20x, duplication at most 30%.
@@ -175,29 +178,56 @@ Sex and identity columns (WES and WGS): `x_depth_ratio`, `y_depth_ratio` (mean d
 WES QC flag thresholds: mean coverage at least 30, at least 80% of target at 20x,
 at least 40% selected bases, duplication at most 50%, dropout at most 10.
 
-## 8. CH report: `workflow/report/ch_report.Rmd`
+## 8. Reports: `workflow/report/`
 
-maftools-only report, no clinical or transcriptomic data required. Rendered by
-the cohort rule `ch_report` (`workflow/rules/report.smk`, script
-`workflow/scripts/render_report.R`) after `chip_cohort`, with R from the
-`report` environment; part of `cohort_qc`, so it runs at the end of a full run
-and with `--cohort-only`.
+Three Rmd reports, rendered by cohort rules in `workflow/rules/report.smk`
+(script `workflow/scripts/render_report.R`) with R from the `report`
+environment, as part of `cohort_qc`: they run at the end of a full run and
+with `--cohort-only`. Each reads the settings of the latest non-dry-run
+`logs/batches/run_*_settings.yaml`, so the values reported are those applied,
+and carries `HemaClone <VERSION>` as author. Parameters: `project_dir` (the
+knit root), `results_dir`, `exclude_samples`, `workflow_version`. Each Rmd is
+knitted from a copy in `<tmpdir>/<report>`, so nothing is written next to the
+source or in the project folder except the HTML and the CSVs.
 
-- Settings and thresholds are read from the latest non-dry-run `logs/batches/run_*_settings.yaml` with a chip block, so the methods text reports the values actually applied. The author line is `HemaClone <VERSION>`.
+**CH report** (`ch_report.Rmd`, rule `ch_report`), maftools only, no clinical
+data:
+
 - Stops if any sample has `gnomad_checked = FALSE`, or if the samples differ between the oncoplot MAF and the sample table.
-- Sections: methods (steps and criteria, inline values), filtering overview (calls failing each criterion, and failing only that one), VAF distribution, recurrent positions, prevalence, plotmafSummary, oncoplot (`annotationOrder = c("CHIP+", "CHIP-")` puts negatives on the right; `barcode_mar = 10`), plotVaf, lollipop plots, CSV export to `reports/results/`.
+- Methods text from the settings: input check (FASTQ and BAM/CRAM), alignment, BQSR intervals by data type, calling, every criterion with its threshold (SOR, indel and repeat-indel thresholds included).
+- Sections: filtering overview (calls failing each criterion, and failing only that one), VAF distribution, strand bias (SOR histogram, `chip.max_sor`), indels in repeats (alt reads against VAF, both indel threshold pairs), calls per sample (candidates and counted calls; top 10 samples by candidates), recurrent positions, prevalence, plotmafSummary, oncoplot (`annotationOrder = c("CHIP+", "CHIP-")` puts negatives on the right; `barcode_mar = 10`), plotVaf, lollipop plots, CSV export.
 - maftools cannot load a MAF made of placeholders only, so MAFs are loaded only when at least one sample is CHIP+.
 - Lollipop plots: labels only for residues mutated in at least two samples; leaving out `labelPos` removes all labels.
-- Parameters: `project_dir` (folder holding `chip/` and `logs/`, the knit root), `results_dir`, `exclude_samples`, `workflow_version`. The Rmd is knitted from a copy in `<tmpdir>/ch_report`, so nothing is written next to the source or in the project folder except the HTML and the CSVs.
+
+**QC report** (`qc_report.Rmd`, rule `qc_report`): every sample, excluded ones
+marked. Reads `qc/qc_flags.tsv`, `contamination/<s>.contamination.table`,
+`qc/somalier/relate.pairs.tsv` and the run's sample sheet. Sections: summary
+(PASS/FLAG, flag counts, flagged and excluded samples), input type and units,
+mean coverage against `ch_filter.min_dp` and the QC threshold, 20x breadth,
+duplicate fraction excluded from coverage, median insert size, contamination
+(no threshold set), X and Y depth ratios with `qc.sex_y_ratio_male`, pairwise
+relatedness with both relatedness thresholds. Stops on a sample missing from
+the sheet or without a contamination table.
+
+**Methods record** (`methods_report.Rmd`, rules `tool_versions` and
+`methods_report`): workflow version, image, code, git commit, data type,
+sample count, machine limits and command; pinned and installed version of
+every package of the three image environments (`tool_versions.py` reads the
+pins from `workflow/docker/*.yaml` and the installed versions from each
+environment's `conda-meta`); R package versions; the resources `MANIFEST.tsv`
+(source, size, MD5, date) and, per reference setting, the file used and
+whether the manifest records it; every setting of the run, flattened. Rendered
+again whenever the cohort tables are rebuilt.
 
 Settings (`report` block):
 
-- `report.enabled` (true): adds the report to `cohort_qc`; preflight checks Rscript and the Rmd only when enabled.
-- `report.ch_rmd` (null = built-in): path to a user-modified copy of the Rmd; an edited copy renders the report again.
-- `report.exclude_samples` (null): file of sample IDs, one per line, `#` comments allowed, left out of the report and its CSVs; the tables in `chip/` are untouched. Unknown IDs stop the render. The report names the excluded samples. The file is an input of the rule, so editing it renders the report again. Replaces `analysis/exclude_samples.sh` (1.5.0), which rewrote the cohort tables.
+- `report.enabled` (true): adds the reports to `cohort_qc`; preflight checks Rscript and the three Rmds only when enabled.
+- `report.ch_rmd`, `report.qc_rmd`, `report.methods_rmd` (null = built-in): path to a user-modified copy; an edited copy renders that report again.
+- `report.exclude_samples` (null): file of sample IDs, one per line, `#` comments allowed, left out of the CH report and its CSVs and marked in the QC report; the tables in `chip/` are untouched. Unknown IDs stop the CH report. The file is an input of the rules, so editing it renders the reports again. Replaces `analysis/exclude_samples.sh` (1.5.0), which rewrote the cohort tables.
 
 A failed render does not affect the other cohort outputs (keep-going); the
-runner prints the log path and `--cohort-only` renders it again.
+runner names each report not rendered, with its log, and `--cohort-only`
+renders it again.
 
 ## 9. Bugs fixed (details in CHANGELOG.md)
 
@@ -251,5 +281,5 @@ becomes 1.6.0 when the release branch is merged into `main`.
 | WGS | `data_type: wes` or `wgs` (flag `--data-type`) switches BQSR intervals and the QC metrics; the recalibrated BAM covers only the panel and the contamination sites; the duplicate-marked BAM is deleted after QC and BQSR; a WGS run must set `ch_filter.min_dp` and `ch_filter.min_vaf` at launch |
 | Input | BAM or CRAM accepted and re-aligned (reads extracted with original qualities, mapped like FASTQ); sample name from the file name; FastQC on FASTQ input only |
 | Sample QC | sex and sample identity check with somalier 0.3.1, in its own environment in the image; duplicate flag at relatedness 0.8; sex inferred only once `qc.sex_y_ratio_male` is set from a first cohort |
-| Reports | rendered at the end of the run with R from its own environment in the image: CH report (maftools); QC and methods reports to follow; no association report. The Rmd ships in the repository and the image, and `report.ch_rmd` renders a modified copy; sample exclusion applies to the reports only |
+| Reports | rendered at the end of the run with R from its own environment in the image: CH report (maftools), QC report, methods record; no association report. The Rmd ships in the repository and the image, and `report.ch_rmd` renders a modified copy; sample exclusion applies to the reports only |
 | Benchmark | after 1.6.0, against the tools in `docs/COMPARATORS.md` |

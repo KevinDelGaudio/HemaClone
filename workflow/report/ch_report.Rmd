@@ -97,7 +97,12 @@ thresholds <- c(
   large_clone_vaf  = settings$chip$large_clone_vaf,
   min_alt_reads    = settings$chip$min_alt_reads,
   max_binom_p      = settings$chip$max_binom_p,
-  max_gnomad_af    = settings$chip$max_gnomad_af
+  max_gnomad_af    = settings$chip$max_gnomad_af,
+  max_sor          = settings$chip$max_sor,
+  indel_min_vaf               = settings$chip$indel_min_vaf,
+  indel_min_alt_reads         = settings$chip$indel_min_alt_reads,
+  repeat_indel_min_vaf        = settings$chip$repeat_indel_min_vaf,
+  repeat_indel_min_alt_reads  = settings$chip$repeat_indel_min_alt_reads
 )
 
 message("Settings: ", settings_file, " | workflow ", settings$workflow$version)
@@ -216,14 +221,20 @@ if (length(excluded) > 0) {
 # Variant Calling and Filtering
 
 ```{r methods_values, include=FALSE}
-panel_bed <- settings$reference$gene_panel_bed
-panel_pad <- regmatches(panel_bed, regexpr("(?<=exome_pad)[0-9]+", panel_bed, perl = TRUE))
-panel_text <- if (length(panel_pad) == 1) {
-  paste0("the CH gene panel restricted to the exons covered by the exome capture, ",
-         "extended by ", panel_pad, " bp on each side to include splice sites (",
-         panel_bed, ")")
+panel_text <- paste0("the CH gene panel (", basename(settings$reference$gene_panel_bed), ")")
+
+wgs <- identical(settings$data_type, "wgs")
+input_text <- paste0(
+  "FASTQ pairs were verified to decompress completely, with matching read ",
+  "counts and read names in the same order in both mates. BAM and CRAM input ",
+  "was checked for a valid header and end-of-file marker, and its read pairs ",
+  "were extracted, with the original base qualities when recorded, for re-alignment.")
+bqsr_text <- if (wgs) {
+  paste0("over the GATK WGS calling regions, using dbSNP and the Mills and 1000 Genomes ",
+         "indels as known sites; the recalibrated alignments were kept for the gene panel ",
+         "and the contamination sites only")
 } else {
-  paste0("the CH gene panel (", panel_bed, ")")
+  "over the exome capture targets, using dbSNP and the Mills and 1000 Genomes indels as known sites"
 }
 
 pon_text <- if (is.null(settings$pon$vcf)) {
@@ -245,19 +256,19 @@ pon_criterion <- if (is.null(settings$pon$vcf)) {
 }
 ```
 
-Blood samples were processed with HemaClone version
-`r settings$workflow$version` (GATK `r settings$tools$gatk_version`), without a
-matched normal.
+Blood `r if (wgs) "genome" else "exome"` samples were processed with HemaClone
+version `r settings$workflow$version` (GATK `r settings$tools$gatk_version`),
+without a matched normal. Tool versions and reference files are listed in the
+methods record (`methods_report.html`).
 
-1. **Input check.** Each FASTQ pair was verified to decompress completely,
-   with matching read counts and read names in the same order in both mates.
-2. **Alignment.** Reads were aligned to hg38 (`r settings$reference$fasta`)
-   with bwa-mem2, one read group per sequencing lane, then coordinate sorted.
+1. **Input check.** `r input_text`
+2. **Alignment.** Reads were aligned to hg38 (`r basename(settings$reference$fasta)`)
+   with bwa-mem2, ALT-aware when the reference has ALT contigs, one read group
+   per sequencing lane, then coordinate sorted.
 3. **Duplicate marking.** Lanes of the same sample were merged and PCR and
    optical duplicates marked.
-4. **Base quality recalibration.** Base qualities were recalibrated over the
-   exome capture targets, using dbSNP and the Mills and 1000 Genomes indels as
-   known sites.
+4. **Base quality recalibration.** Base qualities were recalibrated
+   `r bqsr_text`.
 5. **Somatic calling.** Mutect2 was run in tumour-only mode on
    `r panel_text`, with gnomAD allele frequencies as germline resource.
 6. **Artefact models.** A read orientation model and a per-sample
@@ -269,7 +280,7 @@ matched normal.
    removed.
 9. **Annotation.** The gnomAD allele frequency of each call was added by
    matching position and allele, and calls were annotated with Funcotator
-   (`r settings$reference$funcotator_ds`).
+   (`r basename(settings$reference$funcotator_ds)`).
 
 A call was retained as clonal haematopoiesis when it met all of the following:
 
@@ -282,6 +293,14 @@ A call was retained as clonal haematopoiesis when it met all of the following:
 - gnomAD allele frequency of at most `r thresholds[["max_gnomad_af"]]`, with
   variants absent from gnomAD retained
 - `r pon_criterion`
+- strand odds ratio, from the reads supporting each allele on each strand, of
+  at most `r thresholds[["max_sor"]]`
+- indels: VAF of at least `r thresholds[["indel_min_vaf"]]` and at least
+  `r thresholds[["indel_min_alt_reads"]]` alternate reads; indels in a tandem
+  repeat or homopolymer (flagged by Mutect2, or in the GIAB tandem repeat and
+  homopolymer regions), VAF of at least `r thresholds[["repeat_indel_min_vaf"]]`
+  and at least `r thresholds[["repeat_indel_min_alt_reads"]]` alternate reads.
+  The higher of these and the general thresholds applies.
 
 A sample was classified as CH positive with at least one retained call, in any
 panel gene except `r paste(settings$chip$status_exclude_genes, collapse = ", ")`,
@@ -341,6 +360,89 @@ candidates %>%
   scale_fill_manual(values = c(excluded = "grey70", qualifying = "#B2182B")) +
   theme_classic() +
   labs(x = "Blood VAF", y = "Calls", fill = NULL)
+```
+
+## Strand bias
+
+Artefacts from library preparation or alignment are often supported by reads
+from one strand only. The strand odds ratio (SOR) is low when the alternate
+reads are spread across both strands like the reference reads, and grows with
+strand imbalance.
+
+```{r strand, fig.width=9, fig.height=4, out.width="90%"}
+if (nrow(candidates) == 0 || !"sor" %in% names(candidates)) {
+  message("No strand odds ratio in the candidate table.")
+} else {
+  candidates %>%
+    dplyr::mutate(group = ifelse(pass_strand, "SOR within threshold", "SOR above threshold")) %>%
+    ggplot(aes(x = sor, fill = group)) +
+    geom_histogram(bins = 50) +
+    geom_vline(xintercept = thresholds[["max_sor"]], linetype = "dashed") +
+    scale_fill_manual(values = c("SOR within threshold" = "#9ECAE1",
+                                 "SOR above threshold"  = "#B2182B")) +
+    theme_classic() +
+    labs(x = "Strand odds ratio", y = "Candidate calls", fill = NULL)
+}
+```
+
+## Indels in repeats
+
+Polymerase slippage in tandem repeats and homopolymers produces indel
+artefacts at low allele fractions, so indels there need more support. Each
+point is an indel candidate; the dashed lines mark the thresholds for indels
+in repeats, the dotted lines those for other indels.
+
+```{r indels, fig.width=9, fig.height=5, out.width="90%"}
+indels <- data.frame()
+if (all(c("is_indel", "in_repeat") %in% names(candidates))) {
+  indels <- candidates %>%
+    dplyr::filter(as_flag(is_indel)) %>%
+    dplyr::mutate(t_alt_count = as.numeric(t_alt_count),
+                  region = ifelse(as_flag(in_repeat), "repeat or homopolymer", "other"))
+}
+if (nrow(indels) == 0) {
+  message("No indel candidates.")
+} else {
+  print(dplyr::count(indels, region, qualifies))
+  print(
+    ggplot(indels, aes(x = t_alt_count, y = t_vaf, colour = region, shape = qualifies)) +
+      geom_point(alpha = 0.7) +
+      geom_hline(yintercept = thresholds[["repeat_indel_min_vaf"]], linetype = "dashed") +
+      geom_vline(xintercept = thresholds[["repeat_indel_min_alt_reads"]], linetype = "dashed") +
+      geom_hline(yintercept = thresholds[["indel_min_vaf"]], linetype = "dotted") +
+      geom_vline(xintercept = thresholds[["indel_min_alt_reads"]], linetype = "dotted") +
+      scale_x_log10() +
+      scale_colour_manual(values = c("repeat or homopolymer" = "#B2182B", other = "#2171B5")) +
+      scale_shape_manual(values = c("TRUE" = 16, "FALSE" = 1)) +
+      theme_classic() +
+      labs(x = "Alternate reads (log scale)", y = "Blood VAF", colour = NULL, shape = "qualifies")
+  )
+}
+```
+
+## Calls per sample
+
+Most blood samples carry few candidate calls in a gene panel. A sample with
+many more candidates than the rest points to a technical cause first:
+contamination, low library quality or an alignment problem (see the QC report,
+`qc_report.html`).
+
+```{r per_sample, fig.width=9, fig.height=4, out.width="90%"}
+calls_per_sample <- ch_samples %>%
+  dplyr::select(Tumor_Sample_Barcode, n_candidates, n_CHIP_mutations) %>%
+  dplyr::mutate(n_candidates = as.numeric(n_candidates)) %>%
+  dplyr::arrange(dplyr::desc(n_candidates))
+
+calls_per_sample %>%
+  tidyr::pivot_longer(c(n_candidates, n_CHIP_mutations), names_to = "calls", values_to = "n") %>%
+  dplyr::mutate(calls = ifelse(calls == "n_candidates", "candidate", "qualifying, counted")) %>%
+  ggplot(aes(x = n, fill = calls)) +
+  geom_histogram(binwidth = 1, position = "identity", alpha = 0.7) +
+  scale_fill_manual(values = c(candidate = "grey60", "qualifying, counted" = "#B2182B")) +
+  theme_classic() +
+  labs(x = "Calls per sample", y = "Samples", fill = NULL)
+
+head(calls_per_sample, 10)
 ```
 
 ## Recurrent positions
