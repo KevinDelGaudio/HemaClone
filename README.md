@@ -28,7 +28,16 @@ Changes between versions: [`CHANGELOG.md`](CHANGELOG.md). How to contribute: [`C
   the 1000 Genomes panel of normals. Every file name can be changed in
   `config/config.yaml` or at launch.
 
-## Build the image
+## Get the image
+
+Pull a released image and give it the local name the launcher expects:
+
+```bash
+docker pull ghcr.io/kevindelgaudio/hemaclone:1.6.0
+docker tag ghcr.io/kevindelgaudio/hemaclone:1.6.0 hemaclone:1.6.0
+```
+
+Or build it from a checkout:
 
 ```bash
 git clone https://github.com/KevinDelGaudio/HemaClone.git
@@ -41,7 +50,7 @@ bash workflow/hemaclone.sh build          # builds hemaclone:<VERSION>
 From a project folder that contains `fastq/`:
 
 ```bash
-docker run --rm hemaclone:1.5.0 cat /opt/hemaclone/workflow/hemaclone.sh > hemaclone.sh
+docker run --rm hemaclone:1.6.0 cat /opt/hemaclone/workflow/hemaclone.sh > hemaclone.sh
 
 bash hemaclone.sh run \
     --cores 32 --mem-gb 96 --batch-size 1 \
