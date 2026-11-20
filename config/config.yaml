@@ -49,6 +49,33 @@ reference:
   mills: "Mills_and_1000G_gold_standard.indels.hg38.vcf.gz"
   funcotator_ds: "funcotator_dataSources"
 
+# A reference with ALT or fix-patch contigs (names ending in _alt or _fix) needs
+# the ALT contig list <FASTA>.alt next to the bwa-mem2 index: without it, reads
+# in regions those contigs duplicate get mapping quality 0 and are dropped
+# before calling. The run stops in that case unless this is true.
+reference_checks:
+  allow_alt_without_index: false
+
+# Building the resources folder (bash hemaclone.sh resources). Not used by runs.
+resources:
+  # GATK hg38 reference bundle and somatic resources
+  bundle_url: "https://storage.googleapis.com/gcp-public-data--broad-references/hg38/v0"
+  somatic_url: "https://storage.googleapis.com/gatk-best-practices/somatic-hg38"
+  # Exome kit target BED, hg38 with chr names (flag: --targets)
+  targets: null
+  # CH gene panel: gene spans from the Funcotator GENCODE annotation,
+  # intersected with the kit targets, each piece padded by panel_padding bp
+  panel_padding: 50
+  panel_genes: [
+    ASXL1, ASXL2, BCOR, BCORL1, BRAF, BRCC3, CBL, CBLB, CEBPA, CHEK2, CREBBP, CTCF, CUX1,
+    DNMT3A, EED, EP300, ETNK1, ETV6, EZH2, FLT3, GATA1, GATA2, GATA3, GNA13, GNAS, GNB1,
+    IDH1, IDH2, IKZF1, IKZF2, IKZF3, IL18, IL1A, IL1B, IL33, JAK1, JAK2, JAK3, KDM6A, KIT,
+    KMT2A, KMT2D, KRAS, LUC7L2, MPL, NF1, NLRP3, NPM1, NRAS, NXF1, P2RX7, PDS5B, PHF6,
+    PHIP, PPM1D, PRPF8, PTEN, PTPN11, RAD21, RUNX1, SETBP1, SETD2, SETDB1, SF3B1, SMC1A,
+    SMC3, SRCAP, SRSF2, STAG1, STAG2, SUZ12, TET2, TP53, U2AF1, U2AF2, UNK, WT1, YLPM1,
+    ZBTB33, ZNF318, ZRSR2
+  ]
+
 tools:
   bwa: "bwa-mem2.avx2"
   # The run stops if `gatk --version` reports a different version. null = no check.

@@ -7,10 +7,12 @@
 #   bash tests/ci_checks.sh hemaclone:<VERSION>
 #
 # 1. Syntax of every shell and Python script in the image
-# 2. Synthetic project (tests/make_fixture.sh): tiny FASTQs, empty resources
-# 3. Full launcher dry run, with the launcher copied out of the image
-# 4. Dry run of the whole job graph, cohort steps included
-# 5. Snakemake lint: fails on any lint but the per-rule container lint
+# 2. Synthetic project (tests/make_fixture.sh): tiny FASTQs
+# 3. Resources folder built by get_resources.py from a tiny bundle
+#    (tests/resources_test.sh), used by the dry runs below with default names
+# 4. Full launcher dry run, with the launcher copied out of the image
+# 5. Dry run of the whole job graph, cohort steps included
+# 6. Snakemake lint: fails on any lint but the per-rule container lint
 #
 # Nothing is aligned or called: these checks catch broken rules, settings,
 # preflight checks and launcher logic, not wrong results.
@@ -34,6 +36,7 @@ WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 PROJECT="${WORK}/project"
 RESOURCES="${WORK}/resources"
+FIXTURE_RESOURCES="${WORK}/fixture_resources"
 TMP_DIR="${WORK}/tmp"
 mkdir -p "$PROJECT" "$TMP_DIR"
 
@@ -49,9 +52,12 @@ print(f\"{len(sys.argv) - 1} Python scripts parsed\")' ${IMAGE_HOME}/workflow/sc
 "
 
 echo "== 2. Synthetic project"
-bash "${TESTS_DIR}/make_fixture.sh" "$PROJECT" "$RESOURCES"
+bash "${TESTS_DIR}/make_fixture.sh" "$PROJECT" "$FIXTURE_RESOURCES"
 
-echo "== 3. Launcher dry run"
+echo "== 3. Resources folder"
+bash "${TESTS_DIR}/resources_test.sh" "$IMAGE" "$RESOURCES"
+
+echo "== 4. Launcher dry run"
 cd "$PROJECT"
 docker run --rm "$IMAGE" cat "${IMAGE_HOME}/workflow/hemaclone.sh" > hemaclone.sh
 bash hemaclone.sh run \
@@ -82,10 +88,10 @@ snakemake_in_image() {
             --config samples=config/samples.tsv
 }
 
-echo "== 4. Whole job graph, cohort steps included"
+echo "== 5. Whole job graph, cohort steps included"
 snakemake_in_image all --dry-run --quiet rules
 
-echo "== 5. Lint"
+echo "== 6. Lint"
 LINT_REPORT="${WORK}/lint.txt"
 LINT_STATUS=0
 snakemake_in_image --lint > "$LINT_REPORT" 2>&1 || LINT_STATUS=$?

@@ -46,6 +46,7 @@ workflow/rules/               common, mapping, qc, bqsr, calling, annotation, ch
 workflow/scripts/             make_samplesheet.py, run_batches.py, check_fastq_pair.sh,
                               qc_flags.py, chip_sample.py, chip_cohort.py
 tests/make_fixture.sh         synthetic project (tiny FASTQs, empty resources) for dry runs
+tests/resources_test.sh       builds a resources folder from a tiny bundle inside the image (CI)
 tests/ci_checks.sh            checks run by CI against an image
 tests/compare_outputs.sh      compares the results of two runs (outputs-identical changes)
 .github/workflows/ci.yml      CI on pull requests and pushes to main and release branches
@@ -96,7 +97,8 @@ bash hemaclone.sh run --cores 32 --mem-gb 96 --batch-size 1 \
 
 ## 5. Steps
 
-1. **Sample sheet** built from `fastq/`. Lane-split FASTQs stay separate units with their own read groups; one BAM per sample. Preflight checks: required columns, name characters, duplicated units/read groups/FASTQs, case-only name clashes, missing resources, PoN files, tools, writable tmpdir, job sizes within the memory budget.
+0. **Resources** (`bash hemaclone.sh resources`, `workflow/scripts/get_resources.py`), once per resources folder: GATK hg38 reference bundle (FASTA, `.fai`, `.dict`, ALT contig list saved as `<FASTA>.alt` for alt-aware bwa-mem2 mapping, dbSNP138, Mills/1000G indels, WGS calling regions) and somatic resources (gnomAD AF-only, small ExAC common sites, 1000 Genomes PoN), each checked against the server's size and MD5; bwa-mem2 index; Funcotator somatic data sources; the kit BED (`--targets`) as an interval list; the CH gene panel BED = gene spans of `resources.panel_genes` from the Funcotator GENCODE GTF, intersected with the kit targets, each piece padded by `resources.panel_padding` (50 bp) and merged per gene. Genes missing from the GTF or found at two loci stop the step; genes without kit targets are listed. `MANIFEST.tsv` records source, size, MD5 and date of every file; finished files are skipped on re-runs.
+1. **Sample sheet** built from `fastq/`. Lane-split FASTQs stay separate units with their own read groups; one BAM per sample. Preflight checks: required columns, name characters, duplicated units/read groups/FASTQs, case-only name clashes, missing resources, a reference with ALT or fix-patch contigs but no `<FASTA>.alt` (stops unless `reference_checks.allow_alt_without_index`), PoN files, tools, writable tmpdir, job sizes within the memory budget.
 2. **FASTQ check** per pair: complete gzip decompression, matching read counts and read names in both mates. Truncated pairs fail the sample.
 3. **Mapping**: bwa-mem2 per unit, samtools sort; GATK MarkDuplicates per library after merging units.
 4. **BQSR**: BaseRecalibrator over the exome targets with dbSNP138 and Mills/1000G indels as known sites; ApplyBQSR.
@@ -214,6 +216,8 @@ becomes 1.6.0 when the release branch is merged into `main`.
 | Infrastructure | `pyyaml` pinned; CI on pull requests; image published to GHCR on release; launcher keeps the local name `hemaclone:X.Y.Z` |
 | Polish | conservative clean-up, outputs identical, checked on a test run |
 | Resources | `hemaclone.sh resources` downloads and indexes the hg38 resources and writes a manifest with sources and checksums; the CH gene panel BED is built from a gene list kept in the repository; exome targets stay user-supplied |
+| Reference | GATK `Homo_sapiens_assembly38` with its ALT contig list (alt-aware bwa-mem2 mapping); a reference with ALT or fix-patch contigs and no list stops the run |
+| Gene panel | 81 genes in `resources.panel_genes`; gene spans from the Funcotator GENCODE GTF intersected with the kit targets, padded 50 bp |
 | Strand bias | new criterion: strand odds ratio (SOR, from `FORMAT/SB`) at most `chip.max_sor` (3); alt reads per strand reported as columns, not filtered |
 | Indels in repeats | stricter VAF and alt-read thresholds for indels in tandem repeats or homopolymers (Mutect2 `STR`/`RPA` and GIAB stratification BEDs), not exclusion; ASXL1 G646 is subject to them, not exempt |
 | Indels | separate VAF and alt-read thresholds for indels and SNVs |

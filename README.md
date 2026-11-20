@@ -21,12 +21,8 @@ Changes between versions: [`CHANGELOG.md`](CHANGELOG.md). How to contribute: [`C
 ## Requirements
 
 - Linux with Docker; the user in the `docker` group
-- hg38 resources in one folder (GATK resource bundle names by default):
-  reference FASTA with `.fai`, `.dict` and bwa-mem2 index; exome target
-  interval list; CH gene panel BED; AF-only gnomAD; small ExAC common
-  variants; dbSNP; Mills and 1000G indels; Funcotator data sources; optionally
-  the 1000 Genomes panel of normals. Every file name can be changed in
-  `config/config.yaml` or at launch.
+- hg38 resources in one folder, built with `bash hemaclone.sh resources` (below)
+- The target BED of the exome kit, hg38 coordinates with `chr` names
 
 ## Get the image
 
@@ -45,18 +41,46 @@ cd HemaClone
 bash workflow/hemaclone.sh build          # builds hemaclone:<VERSION>
 ```
 
+## Resources
+
+One command downloads and builds everything a run needs, with the file names
+the defaults expect:
+
+```bash
+docker run --rm hemaclone:1.6.0 cat /opt/hemaclone/workflow/hemaclone.sh > hemaclone.sh
+
+bash hemaclone.sh resources \
+    --resources-dir /path/to/hg38_resources \
+    --targets /path/to/exome_kit_targets.hg38.bed \
+    --cores 8 --mem-gb 96 \
+    --tmpdir /path/to/tmp
+```
+
+- GATK hg38 reference (with its ALT contig list for alt-aware mapping), dbSNP,
+  Mills indels, gnomAD AF-only, common sites and the 1000 Genomes panel of
+  normals, from GATK's public buckets; downloads resume and are checked
+  against the server's size and MD5.
+- bwa-mem2 index (needs much memory: if it is killed, raise `--mem-gb`),
+  Funcotator somatic data sources.
+- The kit BED as an interval list, and the CH gene panel BED: the genes in
+  `resources.panel_genes`, from the Funcotator GENCODE annotation, intersected
+  with the kit targets and padded by `resources.panel_padding` (50 bp). Genes
+  the kit does not cover are listed.
+- `MANIFEST.tsv` records every file with its source, size, MD5 and date.
+  Re-running the command skips what is complete.
+
+A reference with ALT contigs and no ALT contig list stops the run: reads in the
+regions those contigs duplicate would get mapping quality 0 and be lost.
+
 ## Run
 
 From a project folder that contains `fastq/`:
 
 ```bash
-docker run --rm hemaclone:1.6.0 cat /opt/hemaclone/workflow/hemaclone.sh > hemaclone.sh
-
 bash hemaclone.sh run \
     --cores 32 --mem-gb 96 --batch-size 1 \
     --resources-dir /path/to/hg38_resources \
     --tmpdir /path/to/tmp \
-    --set reference.gene_panel_bed=chip_genes.exome_pad50.bed \
     --set ch_filter.min_dp=100 --set ch_filter.min_vaf=0.02
 ```
 

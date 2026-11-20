@@ -19,6 +19,20 @@ Changes merged into `release/1.6.0`.
   its tag is not `v<VERSION>`.
 - Benchmarks for `pon_annotate`, `gnomad_annotate`, `multiqc`, `qc_flags`,
   `chip_sample` and `chip_cohort`: every rule now records runtime and memory.
+- `bash hemaclone.sh resources --resources-dir DIR --targets KIT.bed`
+  (`workflow/scripts/get_resources.py`): downloads the GATK hg38 reference
+  bundle and somatic resources (resuming, checked against the server's size and
+  MD5), saves the ALT contig list for alt-aware bwa-mem2 mapping, builds the
+  bwa-mem2 index, gets the Funcotator somatic data sources, converts the kit
+  BED to an interval list and builds the CH gene panel BED (genes in
+  `resources.panel_genes` from the Funcotator GENCODE annotation, intersected
+  with the kit targets, padded by `resources.panel_padding`). Writes
+  `MANIFEST.tsv`. New config sections `resources` and `reference_checks`.
+- Preflight stops a run whose reference has ALT or fix-patch contigs but no
+  `<FASTA>.alt` (reads in the duplicated regions would get mapping quality 0);
+  `reference_checks.allow_alt_without_index` allows it, with a warning.
+- CI builds a resources folder from a tiny bundle with the real tools
+  (`tests/resources_test.sh`) and runs the dry runs on it.
 - `tests/compare_outputs.sh OLD_PROJECT NEW_PROJECT`: compares the VCF, MAF,
   CHIP and QC-flag records of two runs, skipping header lines with dates and
   versions.

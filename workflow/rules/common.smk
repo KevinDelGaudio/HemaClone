@@ -154,6 +154,30 @@ if not os.path.isdir(REF["funcotator_ds"]):
     missing_resources.append(f"Funcotator data sources: {REF['funcotator_ds']}")
 fail_if(missing_resources, "Reference resources not found")
 
+# ALT and fix-patch contigs need bwa-mem2's ALT contig list (<FASTA>.alt): without
+# it they count as ordinary chromosomes, reads in the regions they duplicate get
+# mapping quality 0, and Mutect2 drops them.
+alt_contigs = 0
+with open(required_files["sequence dictionary"]) as handle:
+    for line in handle:
+        if line.startswith("@SQ"):
+            name = line.split("SN:", 1)[1].split("\t", 1)[0].strip()
+            if name.endswith(("_alt", "_fix")):
+                alt_contigs += 1
+alt_file = f"{REF['fasta']}.alt"
+if alt_contigs and not os.path.isfile(alt_file):
+    if not config["reference_checks"]["allow_alt_without_index"]:
+        raise PreflightError(
+            f"The reference has {alt_contigs} ALT or fix-patch contigs but no ALT contig list "
+            f"({alt_file}). Without it, reads in the regions these contigs duplicate get "
+            "mapping quality 0 and are lost before calling. Use the GATK reference built by "
+            "'bash hemaclone.sh resources', or, to reproduce results made without the list, "
+            "--set reference_checks.allow_alt_without_index=true")
+    log_preflight(f"WARNING: {alt_contigs} ALT or fix-patch contigs without {alt_file}: "
+                  "mapping quality 0 in the regions they duplicate (allowed by setting)")
+elif alt_contigs:
+    log_preflight(f"reference: {alt_contigs} ALT or fix-patch contigs, ALT contig list present")
+
 
 # -----------------------------------------------------------------------------
 # Panel of normals (optional, external)
