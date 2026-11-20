@@ -1,0 +1,42 @@
+# Checks on every pull request and on pushes to main and release branches:
+# builds the image from the checkout and runs tests/ci_checks.sh against it.
+# The tools layer is cached between runs, so a code-only change rebuilds in
+# seconds.
+
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+      - "release/**"
+
+permissions:
+  contents: read
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Read VERSION
+        id: version
+        run: echo "version=$(tr -d '[:space:]' < VERSION)" >> "$GITHUB_OUTPUT"
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: workflow/docker/Dockerfile
+          tags: hemaclone:${{ steps.version.outputs.version }}
+          load: true
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Run checks
+        run: bash tests/ci_checks.sh "hemaclone:${{ steps.version.outputs.version }}"

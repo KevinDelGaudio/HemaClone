@@ -1,6 +1,6 @@
-# Tool versions for the CHIP workflow image.
-# Pinned versions; tools.gatk_version in config.yaml is checked against gatk4.
-name: chip
+# Tool versions for the HemaClone image. Every package is pinned;
+# tools.gatk_version in config.yaml is checked against gatk4.
+name: hemaclone
 channels:
   - conda-forge
   - bioconda
@@ -14,5 +14,5 @@ dependencies:
   - multiqc=1.35
   - snakemake-minimal=9.27.1
   - pandas=3.1.0
-  - pyyaml
+  - pyyaml=6.0.3
   - r-base=4.4.1

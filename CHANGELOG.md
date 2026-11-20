@@ -5,6 +5,25 @@ change to calls or classification bumps at least MINOR; a change that leaves
 every output identical is a PATCH. The version in `VERSION`, the git tag
 `vX.Y.Z` and the Docker image tag `hemaclone:X.Y.Z` always match.
 
+## [Unreleased]
+
+Changes merged into `release/1.6.0`.
+
+### Added
+- CI on pull requests and pushes to `main` and release branches
+  (`.github/workflows/ci.yml`): builds the image and runs `tests/ci_checks.sh`
+  (script syntax, launcher dry run and whole-graph dry run on a synthetic
+  project from `tests/make_fixture.sh`, Snakemake lint reported).
+- Image published to `ghcr.io/kevindelgaudio/hemaclone:<VERSION>` when a GitHub
+  release is published (`.github/workflows/release.yml`); the release stops if
+  its tag is not `v<VERSION>`.
+
+### Changed
+- `pyyaml` pinned in `workflow/docker/environment.yaml`, to the version already
+  in the 1.5.0 image; environment renamed `hemaclone`. Tools unchanged.
+- `CONTRIBUTING.md`: release-branch process; within-cohort recurrence described
+  as a design choice (each sample classified independently), not a gap.
+
 ## [1.5.0]
 
 Renamed to HemaClone. No change to calling, filtering or classification:
