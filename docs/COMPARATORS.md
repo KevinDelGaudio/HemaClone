@@ -75,8 +75,9 @@ about 20; SOR about 2–3; SAF/SAR about 3–5.
 - The underlying data are available on request only.
 
 **Relevance for the comparison.** Complementary rather than competing: it
-filters calls that HemaClone produces. Its strand-bias and repetitive-region
-filters are the ones HemaClone lacks. Its population (within-cohort prevalence)
+filters calls that HemaClone produces. Since 1.6.0 HemaClone has strand-bias
+(strand odds ratio) and repeat-indel criteria of its own; the benchmark should
+compare them with qcCHIP's. Its population (within-cohort prevalence)
 filter has no counterpart by design: HemaClone classifies each sample from its
 own data only. A natural
 analysis is HemaClone calls with and without qcCHIP filtering.
@@ -115,13 +116,13 @@ of indeterminate potential in human genetic data sets. *Blood*.
 | Callers | Mutect2 | 4-caller ensemble | any (VCF input) | *to verify* |
 | Matched normal needed | no | *to verify* | optional | no |
 | Main data type | WES | deep targeted | WES, ultra-deep targeted | WES, WGS |
-| Artefact model | Mutect2 filters, orientation, contamination, external PoN | error-rate estimates | strand bias, repeats, cohort prevalence, permutation | sequencing metrics, gene-specific rules |
+| Artefact model | Mutect2 filters, orientation, contamination, external PoN, strand odds ratio, stricter thresholds for indels in repeats | error-rate estimates | strand bias, repeats, cohort prevalence, permutation | sequencing metrics, gene-specific rules |
 | Deployment | local Docker, hard CPU and RAM limits, batch control | cloud | R package | protocol |
 | Published benchmark | none yet | yes | yes | yes |
 
 Claimed strengths to substantiate: end-to-end reproducibility from FASTQ,
 resource-bounded local execution, per-criterion auditable outputs,
 maftools-ready MAFs including CH negatives, preflight and fail-loud checks.
-Gaps to close or acknowledge: single caller, no strand-bias or repeat-region
-filters, no benchmark. Design difference to explain: no within-cohort
+Gaps to close or acknowledge: single caller, no benchmark, strand and repeat
+thresholds not yet tuned. Design difference to explain: no within-cohort
 recurrence filter, because each sample is classified independently.

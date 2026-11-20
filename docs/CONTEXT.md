@@ -97,7 +97,7 @@ bash hemaclone.sh run --cores 32 --mem-gb 96 --batch-size 1 \
 
 ## 5. Steps
 
-0. **Resources** (`bash hemaclone.sh resources`, `workflow/scripts/get_resources.py`), once per resources folder: GATK hg38 reference bundle (FASTA, `.fai`, `.dict`, ALT contig list saved as `<FASTA>.alt` for alt-aware bwa-mem2 mapping, dbSNP138, Mills/1000G indels, WGS calling regions) and somatic resources (gnomAD AF-only, small ExAC common sites, 1000 Genomes PoN), each checked against the server's size and MD5; bwa-mem2 index; Funcotator somatic data sources; the kit BED (`--targets`) as an interval list; the CH gene panel BED = gene spans of `resources.panel_genes` from the Funcotator GENCODE GTF, intersected with the kit targets, each piece padded by `resources.panel_padding` (50 bp) and merged per gene. Genes missing from the GTF or found at two loci stop the step; genes without kit targets are listed. `MANIFEST.tsv` records source, size, MD5 and date of every file; finished files are skipped on re-runs.
+0. **Resources** (`bash hemaclone.sh resources`, `workflow/scripts/get_resources.py`), once per resources folder: GATK hg38 reference bundle (FASTA, `.fai`, `.dict`, ALT contig list saved as `<FASTA>.alt` for alt-aware bwa-mem2 mapping, dbSNP138, Mills/1000G indels, WGS calling regions) and somatic resources (gnomAD AF-only, small ExAC common sites, 1000 Genomes PoN), each checked against the server's size and MD5; bwa-mem2 index; Funcotator somatic data sources; GIAB tandem repeats and homopolymers BED (kept as downloaded under `giab/`, bgzipped and tabix-indexed as `reference.repeats_bed`); the kit BED (`--targets`) as an interval list; the CH gene panel BED = gene spans of `resources.panel_genes` from the Funcotator GENCODE GTF, intersected with the kit targets, each piece padded by `resources.panel_padding` (50 bp) and merged per gene. Genes missing from the GTF or found at two loci stop the step; genes without kit targets are listed. `MANIFEST.tsv` records source, size, MD5 and date of every file; finished files are skipped on re-runs.
 1. **Sample sheet** built from `fastq/`. Lane-split FASTQs stay separate units with their own read groups; one BAM per sample. Preflight checks: required columns, name characters, duplicated units/read groups/FASTQs, case-only name clashes, missing resources, a reference with ALT or fix-patch contigs but no `<FASTA>.alt` (stops unless `reference_checks.allow_alt_without_index`), PoN files, tools, writable tmpdir, job sizes within the memory budget.
 2. **FASTQ check** per pair: complete gzip decompression, matching read counts and read names in both mates. Truncated pairs fail the sample.
 3. **Mapping**: bwa-mem2 per unit, samtools sort; GATK MarkDuplicates per library after merging units.
@@ -133,6 +133,9 @@ All criteria are configurable at launch (`--set chip.<key>=...`, `--set ch_filte
 | Germline exclusion | one-sided binomial test VAF < 0.5, p < 0.01 |
 | gnomAD AF | at most 0.01, variants absent from gnomAD = 0 |
 | PoN | excluded if in the PoN, unless at a hotspot |
+| Strand bias | strand odds ratio at most `chip.max_sor` (3), from Mutect2 `FORMAT/SB` (ref and alt reads on each strand), GATK formula with 1 added to each count |
+| Indels | VAF at least `chip.indel_min_vaf` and alt reads at least `chip.indel_min_alt_reads`; defaults equal to the general ones (0.02, 3), so no effect unless raised |
+| Indels in repeats | an indel flagged `STR` by Mutect2 or overlapping the GIAB tandem-repeat and homopolymer BED (`reference.repeats_bed`) needs VAF at least `chip.repeat_indel_min_vaf` (0.05) and alt reads at least `chip.repeat_indel_min_alt_reads` (5); no gene or hotspot is exempt (ASXL1 G646 included) |
 
 PoN-exempt hotspots: DNMT3A R882, JAK2 V617F, SF3B1 K700/K666, SRSF2 P95,
 U2AF1 S34/Q157, IDH1 R132, IDH2 R140/R172, GNB1 K57, KRAS and NRAS G12/G13/Q61.
@@ -140,6 +143,10 @@ U2AF1 S34/Q157, IDH1 R132, IDH2 R140/R172, GNB1 K57, KRAS and NRAS G12/G13/Q61.
 - A sample is **CHIP+** with at least one qualifying call in a gene not in `status_exclude_genes` (IL1A, IL1B, IL18, IL33, NLRP3, P2RX7: reported, not counted).
 - **Large clone**: VAF at least 0.10.
 - MAF rows are matched one by one to VCF alleles (Funcotator writes one row per ALT allele in VCF order); a mismatch stops the step.
+- Indel and repeat-indel thresholds act on calls that already passed `ch_filter.min_vaf` and `chip.min_alt_reads`, so they can only be stricter: lower values stop the run at preflight.
+- Strand counts are one set per VCF site, shared by the alleles of a multi-allelic site. A VCF without `FORMAT/SB` stops the step; without the `INFO/STR` header line, repeats come from the GIAB BED only (logged).
+- An indel's span for the BED lookup: the anchor base, the deleted bases and the next base (where an insertion goes).
+- These filters add to the Mutect2 strand and polymerase-slippage filters that PASS calls already passed.
 - gnomAD availability is read from the VCF header. A sample without calls has no INFO columns in its MAF, which is expected; a MAF with calls but no gnomAD column stops the step.
 
 ## 7. Outputs
@@ -149,7 +156,8 @@ U2AF1 S34/Q157, IDH1 R132, IDH2 R140/R172, GNB1 K57, KRAS and NRAS G12/G13/Q61.
 | `chip/chip_samples.tsv` | one row per sample, CHIP- included: status, n calls, max and summed VAF, large clone, genes, gnomad_checked |
 | `chip/chip_calls.maf` | counted calls only, maftools-ready |
 | `chip/chip_calls.oncoplot.maf` | the same plus one Silent `CHIP_NEGATIVE_PLACEHOLDER` row per CHIP- sample, so oncoplot shows the whole cohort |
-| `chip/chip_candidates.tsv` | every ch_final call with one `pass_` column per criterion, `qualifies`, `counts_for_status` |
+| `chip/chip_candidates.tsv` | every ch_final call with one `pass_` column per criterion, `qualifies`, `counts_for_status`, and the values behind the new criteria: `sb_ref_fwd`, `sb_ref_rev`, `sb_alt_fwd`, `sb_alt_rev`, `sor`, `is_indel`, `in_str`, `in_giab_repeat`, `in_repeat` |
+| `chip/chip_filter_counts.tsv` | per criterion: candidate calls, calls failing it, calls failing it and no other (those it alone removes) |
 | `chip/samples/<s>.candidates.tsv`, `<s>.status.tsv` | per-sample tables |
 | `contamination/<s>.contamination.table` | CalculateContamination estimate |
 | `qc/multiqc/chip_qc.html`, `qc/qc_flags.tsv` | QC report and per-sample flags |
@@ -192,8 +200,7 @@ rerunnable, stops on unknown IDs.
 - **min_dp vs real depth**: check that `ch_filter.min_dp` fits the achieved panel depth (CollectHsMetrics) before trusting calls near the floor.
 - **No sample identity check** (e.g. Conpair) between samples of the same individual.
 - **Systematic artefacts pass the filters.** Recurrent indels in low-complexity regions of long genes (KMT2A, KMT2D, BCORL1, CREBBP, SRCAP, ZNF318) and missense calls in GC-rich genes (CEBPA, GATA2, WT1) can clear every criterion, because an external PoN does not contain artefacts specific to one lab or protocol. Signs: many calls concentrated in a few samples, the same genes and positions across unrelated individuals, VAF near the floor, frameshift and in-frame insertions. Candidate filters, discussed but not implemented:
-  - exclude indels in simple-repeat or low-complexity regions (RepeatMasker simple repeats, GIAB difficult-regions BED)
-  - higher VAF and alt-read thresholds for indels than for SNVs
+  - indels in tandem repeats and homopolymers, and indels in general: stricter thresholds, implemented in 1.6.0 (section 6)
   - within-cohort recurrence flag for non-hotspot positions: not adopted, because each sample is classified from its own data only (section 1); recurrent positions stay a review item in `ch_analysis.Rmd`
 - **Optional matched-tumor annotation**, discussed but not implemented: genotype each blood call in the same patient's tumor BAM (Mutect2 `--alleles` or pileup) and compare VAFs. Tumor VAF well above blood VAF suggests tumor-derived; lower or absent suggests CH. Annotation only, never automatic removal; the tumor must not be used as a matched normal, because CH infiltrating the tumor would be removed.
 - IGV review of a few calls per suspicious gene before reporting.
@@ -218,8 +225,8 @@ becomes 1.6.0 when the release branch is merged into `main`.
 | Resources | `hemaclone.sh resources` downloads and indexes the hg38 resources and writes a manifest with sources and checksums; the CH gene panel BED is built from a gene list kept in the repository; exome targets stay user-supplied |
 | Reference | GATK `Homo_sapiens_assembly38` with its ALT contig list (alt-aware bwa-mem2 mapping); a reference with ALT or fix-patch contigs and no list stops the run |
 | Gene panel | 81 genes in `resources.panel_genes`; gene spans from the Funcotator GENCODE GTF intersected with the kit targets, padded 50 bp |
-| Strand bias | new criterion: strand odds ratio (SOR, from `FORMAT/SB`) at most `chip.max_sor` (3); alt reads per strand reported as columns, not filtered |
-| Indels in repeats | stricter VAF and alt-read thresholds for indels in tandem repeats or homopolymers (Mutect2 `STR`/`RPA` and GIAB stratification BEDs), not exclusion; ASXL1 G646 is subject to them, not exempt |
+| Strand bias | new criterion: strand odds ratio (SOR, from `FORMAT/SB`) at most `chip.max_sor` (3); reads per strand reported as columns, not filtered |
+| Indels in repeats | stricter VAF and alt-read thresholds for indels in tandem repeats or homopolymers (Mutect2 `STR` and the GIAB tandem-repeat and homopolymer BED), not exclusion; defaults VAF 0.05 and 5 alt reads, to be tuned with the benchmark; ASXL1 G646 is subject to them, not exempt |
 | Indels | separate VAF and alt-read thresholds for indels and SNVs |
 | Within-cohort recurrence | not implemented: samples are classified independently |
 | Low mappability | not implemented |

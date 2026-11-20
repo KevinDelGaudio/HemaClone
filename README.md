@@ -60,6 +60,8 @@ bash hemaclone.sh resources \
   Mills indels, gnomAD AF-only, common sites and the 1000 Genomes panel of
   normals, from GATK's public buckets; downloads resume and are checked
   against the server's size and MD5.
+- GIAB tandem-repeat and homopolymer BED (Dwarshuis et al. 2024), for the
+  stricter thresholds on indels in repeats.
 - bwa-mem2 index (needs much memory: if it is killed, raise `--mem-gb`),
   Funcotator somatic data sources.
 - The kit BED as an interval list, and the CH gene panel BED: the genes in
@@ -98,6 +100,7 @@ bash hemaclone.sh run \
 | `chip/chip_calls.maf` | qualifying calls (maftools) |
 | `chip/chip_calls.oncoplot.maf` | the same, plus a placeholder row per CHIP- sample for oncoplots |
 | `chip/chip_candidates.tsv` | every candidate call with one column per criterion |
+| `chip/chip_filter_counts.tsv` | per criterion: calls failing it, and calls failing only it |
 | `qc/multiqc/chip_qc.html`, `qc/qc_flags.tsv` | QC report and per-sample flags |
 
 ## Report

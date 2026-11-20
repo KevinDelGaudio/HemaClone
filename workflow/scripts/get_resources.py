@@ -14,10 +14,11 @@ with the same size and checksum:
      Mills indels, WGS calling regions
   2. GATK somatic resources: gnomAD allele frequencies, common sites, panel
      of normals
-  3. bwa-mem2 index of the FASTA
-  4. Funcotator somatic data sources
-  5. Exome intervals: the kit BED given with --targets, as an interval list
-  6. CH gene panel BED: gene spans from the Funcotator GENCODE annotation,
+  3. GIAB tandem repeats and homopolymers BED, bgzipped and tabix-indexed
+  4. bwa-mem2 index of the FASTA
+  5. Funcotator somatic data sources
+  6. Exome intervals: the kit BED given with --targets, as an interval list
+  7. CH gene panel BED: gene spans from the Funcotator GENCODE annotation,
      intersected with the kit targets and padded
 
 Downloads resume after an interruption and are checked against the size and,
@@ -267,6 +268,43 @@ def run_tool(command, log_path):
              + "".join(tail))
 
 
+def get_repeats_bed(url, dest, rows, name, logs):
+    """GIAB stratification BED: the download is kept under giab/, the copy
+    the workflow reads is bgzipped and indexed with tabix."""
+    source = os.path.join("giab", os.path.basename(url))
+    os.makedirs(os.path.join(dest, "giab"), exist_ok=True)
+    size, md5 = remote_info(url)
+    if recorded(rows, dest, source) and int(rows[source]["bytes"]) == size \
+            and recorded(rows, dest, name) and recorded(rows, dest, f"{name}.tbi"):
+        print(f"  present   {name}")
+        return
+    print(f"  download  {source} ({size / 1024 ** 2:,.0f} MB)", flush=True)
+    download(url, os.path.join(dest, source), size)
+    record_file(rows, dest, source, url)
+    if md5 is not None and rows[source]["md5"] != md5:
+        got = rows.pop(source)["md5"]
+        os.remove(os.path.join(dest, source))
+        write_manifest(dest, rows)
+        fail(f"{source}: MD5 {got} does not match the server's {md5}; re-run to download it again")
+    target = os.path.join(dest, name)
+    log_path = os.path.join(logs, "repeats_bed.log")
+    print(f"  $ gzip -dc {source} | bgzip -c > {name}; tabix -p bed {name}", flush=True)
+    with open(log_path, "w") as log, open(f"{target}.part", "wb") as out:
+        unzip = subprocess.Popen(["gzip", "-dc", os.path.join(dest, source)],
+                                 stdout=subprocess.PIPE, stderr=log)
+        zipped = subprocess.run(["bgzip", "-c"], stdin=unzip.stdout, stdout=out, stderr=log)
+        unzip.stdout.close()
+        if unzip.wait() != 0 or zipped.returncode != 0:
+            out.close()
+            os.remove(f"{target}.part")
+            fail(f"recompressing {source} failed; see {log_path}")
+    os.replace(f"{target}.part", target)
+    run_tool(["tabix", "-f", "-p", "bed", target], log_path)
+    record_file(rows, dest, name, f"built: bgzip of {source}")
+    record_file(rows, dest, f"{name}.tbi", f"built: tabix -p bed {name}")
+    write_manifest(dest, rows)
+
+
 def build_bwa_index(dest, rows, logs):
     fasta = os.path.join(dest, FASTA)
     index_files = [f"{FASTA}{suffix}" for suffix in (".0123", ".amb", ".ann", ".bwt.2bit.64", ".pac")]
@@ -475,7 +513,7 @@ def main(argv):
         problems.append("no exome kit targets: pass --targets KIT.bed (hg38, chr names)")
     elif not os.path.isfile(targets):
         problems.append(f"targets BED not found: {targets}")
-    for tool in ("gatk", "bwa-mem2"):
+    for tool in ("gatk", "bwa-mem2", "bgzip", "tabix"):
         if shutil.which(tool) is None:
             problems.append(f"{tool} not found on PATH")
     if not isinstance(resources["panel_padding"], int) or resources["panel_padding"] < 0:
@@ -498,21 +536,24 @@ def main(argv):
     print(f"  panel        : {len(resources['panel_genes'])} genes, padding {resources['panel_padding']} bp")
     print(f"  bundle       : {resources['bundle_url']}")
     print(f"  somatic      : {resources['somatic_url']}")
+    print(f"  repeats      : {resources['repeats_url']}")
     print(f"  tmpdir       : {tmpdir}")
 
     rows = read_manifest(dest)
 
-    step("1/6 GATK reference bundle")
+    step("1/7 GATK reference bundle")
     fetch_files(resources["bundle_url"], BUNDLE_FILES, dest, rows)
-    step("2/6 GATK somatic resources")
+    step("2/7 GATK somatic resources")
     fetch_files(resources["somatic_url"], SOMATIC_FILES, dest, rows)
-    step("3/6 bwa-mem2 index (slow, and needs much memory for hg38)")
+    step("3/7 GIAB tandem repeats and homopolymers")
+    get_repeats_bed(resources["repeats_url"], dest, rows, config["reference"]["repeats_bed"], logs)
+    step("4/7 bwa-mem2 index (slow, and needs much memory for hg38)")
     build_bwa_index(dest, rows, logs)
-    step("4/6 Funcotator somatic data sources")
+    step("5/7 Funcotator somatic data sources")
     get_funcotator(dest, rows, config["reference"]["funcotator_ds"], tmpdir, logs)
-    step("5/6 Exome intervals")
+    step("6/7 Exome intervals")
     kit = build_exome_intervals(dest, rows, config, targets, logs)
-    step("6/6 CH gene panel")
+    step("7/7 CH gene panel")
     build_panel(dest, rows, config, kit, logs)
 
     defaults = {"fasta": FASTA, "dbsnp": "Homo_sapiens_assembly38.dbsnp138.vcf",

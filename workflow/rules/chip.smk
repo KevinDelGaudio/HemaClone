@@ -9,6 +9,8 @@ rule chip_sample:
     input:
         maf = "maf/{sample}_ch_final.funcotated.maf",
         vcf = "vcf/gnomad/{sample}.ch_final.vcf.gz",
+        repeats = REF["repeats_bed"],
+        repeats_tbi = f"{REF['repeats_bed']}.tbi",
     output:
         candidates = "chip/samples/{sample}.candidates.tsv",
         status = "chip/samples/{sample}.status.tsv",
@@ -35,6 +37,7 @@ rule chip_cohort:
         maf = "chip/chip_calls.maf",
         oncoplot_maf = "chip/chip_calls.oncoplot.maf",
         samples = "chip/chip_samples.tsv",
+        filter_counts = "chip/chip_filter_counts.tsv",
     params:
         samples = SAMPLES,
         large_clone_vaf = config["chip"]["large_clone_vaf"],

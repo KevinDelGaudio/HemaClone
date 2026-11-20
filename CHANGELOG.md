@@ -31,6 +31,26 @@ Changes merged into `release/1.6.0`.
 - Preflight stops a run whose reference has ALT or fix-patch contigs but no
   `<FASTA>.alt` (reads in the duplicated regions would get mapping quality 0);
   `reference_checks.allow_alt_without_index` allows it, with a warning.
+- Three CHIP criteria (calls change):
+  - `pass_strand`: strand odds ratio at most `chip.max_sor` (3), from Mutect2
+    `FORMAT/SB`; new columns `sb_ref_fwd`, `sb_ref_rev`, `sb_alt_fwd`,
+    `sb_alt_rev`, `sor`.
+  - `pass_repeat_indel`: an indel flagged `STR` by Mutect2 or in the GIAB
+    tandem-repeat and homopolymer BED (`reference.repeats_bed`) needs VAF at
+    least `chip.repeat_indel_min_vaf` (0.05) and at least
+    `chip.repeat_indel_min_alt_reads` (5) alt reads; new columns `is_indel`,
+    `in_str`, `in_giab_repeat`, `in_repeat`.
+  - `pass_indel`: thresholds for all indels, `chip.indel_min_vaf` and
+    `chip.indel_min_alt_reads`, equal to the general ones by default.
+  - Preflight stops thresholds below the general floors, which would do
+    nothing.
+- `chip/chip_filter_counts.tsv`: per criterion, calls failing it and calls
+  failing only it.
+- The resources command downloads the GIAB BED (`resources.repeats_url`) and
+  saves it bgzipped and indexed; existing resources folders need the command
+  run again (it only adds the new file).
+- `tests/chip_sample_test.py`: classification of a synthetic sample, one call
+  per case, run in CI inside the image.
 - CI builds a resources folder from a tiny bundle with the real tools
   (`tests/resources_test.sh`) and runs the dry runs on it.
 - `tests/compare_outputs.sh OLD_PROJECT NEW_PROJECT`: compares the VCF, MAF,
