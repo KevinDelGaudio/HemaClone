@@ -10,7 +10,7 @@
 # 2. Synthetic project (tests/make_fixture.sh): tiny FASTQs, empty resources
 # 3. Full launcher dry run, with the launcher copied out of the image
 # 4. Dry run of the whole job graph, cohort steps included
-# 5. Snakemake lint, reported but not blocking
+# 5. Snakemake lint: fails on any lint but the per-rule container lint
 #
 # Nothing is aligned or called: these checks catch broken rules, settings,
 # preflight checks and launcher logic, not wrong results.
@@ -85,15 +85,22 @@ snakemake_in_image() {
 echo "== 4. Whole job graph, cohort steps included"
 snakemake_in_image all --dry-run --quiet rules
 
-echo "== 5. Lint (reported, not blocking)"
+echo "== 5. Lint"
 LINT_REPORT="${WORK}/lint.txt"
-if snakemake_in_image --lint > "$LINT_REPORT" 2>&1; then
-    echo "No lints."
-else
-    grep -v '^\[preflight\]' "$LINT_REPORT" || true
+LINT_STATUS=0
+snakemake_in_image --lint > "$LINT_REPORT" 2>&1 || LINT_STATUS=$?
+grep -v '^\[preflight\]' "$LINT_REPORT" || true
+# Snakemake exits 1 when it finds lints; a failure without any lint means lint did not run
+if [[ "$LINT_STATUS" -ne 0 ]] && ! grep -q '^Lints for' "$LINT_REPORT"; then
+    echo "ERROR: snakemake --lint failed (exit ${LINT_STATUS}) without reporting lints" >&2
+    exit 1
 fi
 # The per-rule container lint does not apply: the whole workflow runs in one image
 OTHER_LINTS="$(grep -E '^\s+\* ' "$LINT_REPORT" | grep -vc 'Specify a conda environment or container' || true)"
 echo "Lints other than the per-rule container lint: ${OTHER_LINTS}"
+if [[ "$OTHER_LINTS" -ne 0 ]]; then
+    echo "ERROR: fix the lints above" >&2
+    exit 1
+fi
 
 echo "All checks passed."

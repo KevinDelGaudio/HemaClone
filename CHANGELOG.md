@@ -17,12 +17,34 @@ Changes merged into `release/1.6.0`.
 - Image published to `ghcr.io/kevindelgaudio/hemaclone:<VERSION>` when a GitHub
   release is published (`.github/workflows/release.yml`); the release stops if
   its tag is not `v<VERSION>`.
+- Benchmarks for `pon_annotate`, `gnomad_annotate`, `multiqc`, `qc_flags`,
+  `chip_sample` and `chip_cohort`: every rule now records runtime and memory.
+- `tests/compare_outputs.sh OLD_PROJECT NEW_PROJECT`: compares the VCF, MAF,
+  CHIP and QC-flag records of two runs, skipping header lines with dates and
+  versions.
 
 ### Changed
 - `pyyaml` pinned in `workflow/docker/environment.yaml`, to the version already
   in the 1.5.0 image; environment renamed `hemaclone`. Tools unchanged.
 - `CONTRIBUTING.md`: release-branch process; within-cohort recurrence described
   as a design choice (each sample classified independently), not a gap.
+- Code clean-up, outputs identical (same planned jobs and shell commands; same
+  classification tables on a test case):
+  - `chip_sample.py`, `chip_cohort.py`, `qc_flags.py` write the error that
+    stops them to the rule log (Snakemake does not capture a script's stderr
+    there), and close their logs on every exit.
+  - Environment variable `CHIP_MODE` renamed `HEMACLONE_MODE` (the recorded
+    `workflow.mode` setting is unchanged).
+  - `filtered_vcf()` moved to `common.smk` with the other helpers; file names
+    built with f-strings.
+  - `markdup` builds its `-I` arguments from its inputs.
+  - Launcher help printed up to the end of the header comment instead of fixed
+    line numbers.
+  - `run_batches.py` runs the preflight checks once on the full sample sheet
+    before the first batch and stops the run if they fail. Before, a missing
+    resource marked every sample as failed with a misleading "FASTQ check
+    failed" reason, batch after batch.
+- Snakemake lint is blocking in CI (the per-rule container lint is ignored).
 
 ## [1.5.0]
 

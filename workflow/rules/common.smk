@@ -132,21 +132,21 @@ log_preflight(f"resources folder: {REF_DIR}")
 
 def vcf_index(path):
     if path.endswith(".gz"):
-        return path + ".tbi"
-    return path + ".idx"
+        return f"{path}.tbi"
+    return f"{path}.idx"
 
 
 required_files = {
     "reference FASTA": REF["fasta"],
-    "FASTA index": REF["fasta"] + ".fai",
-    "sequence dictionary": os.path.splitext(REF["fasta"])[0] + ".dict",
-    "bwa-mem2 index": REF["fasta"] + ".bwt.2bit.64",
+    "FASTA index": f"{REF['fasta']}.fai",
+    "sequence dictionary": f"{os.path.splitext(REF['fasta'])[0]}.dict",
+    "bwa-mem2 index": f"{REF['fasta']}.bwt.2bit.64",
     "exome intervals": REF["exome_intervals"],
     "gene panel BED": REF["gene_panel_bed"],
 }
 for key in ["gnomad", "common_variants", "dbsnp", "mills"]:
     required_files[key] = REF[key]
-    required_files[key + " index"] = vcf_index(REF[key])
+    required_files[f"{key} index"] = vcf_index(REF[key])
 
 missing_resources = [f"{label}: {path}" for label, path in required_files.items()
                      if not os.path.isfile(path)]
@@ -175,7 +175,7 @@ if PON_VCF and not os.path.isabs(PON_VCF):
 if PON_VCF:
     if PON_MODE not in ("annotate", "filter"):
         raise PreflightError(f"pon.mode must be 'annotate' or 'filter', got '{PON_MODE}'")
-    fail_if([p for p in [PON_VCF, PON_VCF + ".tbi"] if not os.path.isfile(p)],
+    fail_if([p for p in [PON_VCF, f"{PON_VCF}.tbi"] if not os.path.isfile(p)],
             "Panel of normals files not found")
     log_preflight(f"panel of normals: {PON_VCF} (mode: {PON_MODE})")
 else:
@@ -257,6 +257,13 @@ def java_opts(wildcards, resources):
     # Evaluated per job, so --set-resources overrides also change the heap
     heap_gb = max(1, int(resources.mem_mb * config["java_heap_fraction"] / 1024))
     return f"-Xmx{heap_gb}g -XX:+UseParallelGC -Djava.io.tmpdir={config['tmpdir']}"
+
+
+def filtered_vcf(wildcards):
+    """FilterMutectCalls output, or its PoN-annotated copy when the PoN is in annotate mode."""
+    if PON_ANNOTATE:
+        return f"vcf/filtered/{wildcards.sample}.filtered.pon.vcf.gz"
+    return f"vcf/filtered/{wildcards.sample}.filtered.vcf.gz"
 
 
 def sample_outputs():
