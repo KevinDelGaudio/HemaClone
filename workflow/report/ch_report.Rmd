@@ -1,6 +1,6 @@
 ---
 title: "Clonal Haematopoiesis Analysis"
-author: "Kevin Del Gaudio"
+author: "HemaClone `r params$workflow_version`"
 date: "`r Sys.Date()`"
 output:
   html_document:
@@ -9,6 +9,9 @@ output:
     number_sections: true
 params:
   project_dir: ""
+  results_dir: "results"
+  exclude_samples: ""
+  workflow_version: ""
 ---
 
 # Overview
@@ -34,9 +37,11 @@ library(ggplot2)
 library(maftools)
 library(yaml)
 
-# Folder holding the workflow outputs (chip/, logs/), passed at render time:
-# rmarkdown::render("ch_analysis.Rmd", params = list(project_dir = "/path"))
+# Rendered by the ch_report step of the workflow (workflow/scripts/render_report.R),
+# with the project folder holding chip/ and logs/, the folder for the CSV
+# exports, and an optional file of sample IDs to leave out.
 PROJECT_DIR <- params$project_dir
+RESULTS_DIR <- params$results_dir
 
 if (!nzchar(PROJECT_DIR)) {
   stop("Set the project folder: rmarkdown::render(..., params = list(project_dir = \"/path\"))")
@@ -111,6 +116,35 @@ n_report <- function(df, label) {
 
 as_flag <- function(x) toupper(as.character(x)) == "TRUE"
 
+# Samples left out of this report (report.exclude_samples): one ID per line,
+# blank lines and lines starting with # ignored. The workflow tables in chip/
+# keep every sample; filtered copies are loaded here.
+excluded <- character(0)
+if (nzchar(params$exclude_samples)) {
+  if (!file.exists(params$exclude_samples)) {
+    stop("Exclusion list not found: ", params$exclude_samples)
+  }
+  ids <- trimws(sub("#.*$", "", readLines(params$exclude_samples, warn = FALSE)))
+  excluded <- unique(ids[nzchar(ids)])
+  cohort_ids <- read.delim(input_files[["samples"]], stringsAsFactors = FALSE)$Tumor_Sample_Barcode
+  unknown <- setdiff(excluded, cohort_ids)
+  if (length(unknown) > 0) {
+    stop("Excluded IDs not in the cohort: ", paste(unknown, collapse = ", "))
+  }
+  filtered_dir <- file.path(tempdir(), "filtered")
+  dir.create(filtered_dir, showWarnings = FALSE)
+  for (key in names(input_files)) {
+    is_maf <- grepl("\\.maf$", input_files[[key]])
+    table <- read.delim(input_files[[key]], comment.char = if (is_maf) "#" else "",
+                        stringsAsFactors = FALSE, check.names = FALSE)
+    table <- table[!table$Tumor_Sample_Barcode %in% excluded, , drop = FALSE]
+    path <- file.path(filtered_dir, basename(input_files[[key]]))
+    write.table(table, path, sep = "\t", quote = FALSE, row.names = FALSE)
+    input_files[[key]] <- path
+  }
+  message("Excluded samples (", length(excluded), "): ", paste(excluded, collapse = ", "))
+}
+
 ch_samples <- read.delim(input_files[["samples"]], stringsAsFactors = FALSE,
                          check.names = FALSE) %>%
   n_report("samples") %>%
@@ -170,6 +204,13 @@ criteria_cols <- grep("^pass_", names(candidates), value = TRUE)
 candidates <- candidates %>%
   dplyr::mutate(dplyr::across(dplyr::all_of(c(criteria_cols, "qualifies", "counts_for_status")),
                               as_flag))
+```
+
+```{r excluded, results = "asis"}
+if (length(excluded) > 0) {
+  cat(sprintf("**Samples left out of this report (%d):** %s. The workflow tables in `chip/` include them.\n",
+              length(excluded), paste(excluded, collapse = ", ")))
+}
 ```
 
 # Variant Calling and Filtering
@@ -423,11 +464,11 @@ for (g in lollipop_genes) {
 # Export
 
 ```{r export}
-dir.create("results", showWarnings = FALSE)
-write.csv(ch_samples,     "results/ch_samples.csv",          row.names = FALSE)
-write.csv(ch_calls,       "results/ch_calls.csv",            row.names = FALSE)
-write.csv(recurrent_pos,  "results/ch_recurrent_positions.csv", row.names = FALSE)
-write.csv(filter_summary, "results/ch_filter_summary.csv",   row.names = FALSE)
+dir.create(RESULTS_DIR, showWarnings = FALSE, recursive = TRUE)
+write.csv(ch_samples,     file.path(RESULTS_DIR, "ch_samples.csv"),             row.names = FALSE)
+write.csv(ch_calls,       file.path(RESULTS_DIR, "ch_calls.csv"),               row.names = FALSE)
+write.csv(recurrent_pos,  file.path(RESULTS_DIR, "ch_recurrent_positions.csv"), row.names = FALSE)
+write.csv(filter_summary, file.path(RESULTS_DIR, "ch_filter_summary.csv"),      row.names = FALSE)
 ```
 
 # Session Info

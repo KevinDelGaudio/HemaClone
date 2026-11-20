@@ -18,6 +18,8 @@
 #    them, the dry run plans genome-wide coverage metrics, not capture metrics
 # 9. BAM and CRAM input re-aligned with the real tools (tests/bam_input_test.sh)
 # 10. Sex and identity check with the real somalier (tests/somalier_test.sh)
+# 11. CH report rendered on a synthetic cohort, one sample excluded
+#     (tests/report_test.py)
 #
 # Nothing is aligned or called: these checks catch broken rules, settings,
 # preflight checks and launcher logic, not wrong results.
@@ -146,5 +148,9 @@ bash "${TESTS_DIR}/bam_input_test.sh" "$IMAGE" "$RESOURCES"
 
 echo "== 10. Sex and identity check"
 bash "${TESTS_DIR}/somalier_test.sh" "$IMAGE" "$RESOURCES"
+
+echo "== 11. CH report"
+docker run --rm -u "$(id -u):$(id -g)" -v "${TESTS_DIR}:/tests:ro" -e HOME=/tmp -w /tmp \
+    "$IMAGE" python /tests/report_test.py "$IMAGE_HOME"
 
 echo "All checks passed."

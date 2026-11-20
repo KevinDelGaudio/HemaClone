@@ -456,7 +456,8 @@ def main():
         command += passthrough
         return command
 
-    cohort_extra = ["--allowed-rules", "multiqc", "qc_flags", "chip_cohort", "somalier_relate", "cohort_qc"]
+    cohort_extra = ["--allowed-rules", "multiqc", "qc_flags", "chip_cohort", "somalier_relate",
+                    "ch_report", "cohort_qc"]
 
     # ---- preflight once, on the whole sheet ----------------------------------------
     # The checks in common.smk run whenever Snakemake reads the workflow. A failure
@@ -580,6 +581,11 @@ def main():
 
     print("\n=== cohort QC report ===", flush=True)
     returncode = subprocess.run(snakemake_command(["cohort_qc"], full_sheet, cohort_extra)).returncode
+    # The report is rendered last: when it fails, the cohort tables are complete
+    if config["report"]["enabled"] and not os.path.isfile("reports/ch_report.html"):
+        print("\nCH report not rendered: logs/ch_report/ch_report.log\n"
+              "  The tables in chip/ and qc/ are complete. Fix the cause and run again with --cohort-only.",
+              file=sys.stderr)
     with open(run_log, "a") as handle:
         handle.write(f"cohort\tall\t{'ok' if returncode == 0 else 'failed'}\t-\t-\n")
     print(f"Batch summary: {run_log}")

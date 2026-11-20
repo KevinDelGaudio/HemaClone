@@ -168,14 +168,42 @@ not needed.
 | `chip/chip_filter_counts.tsv` | per criterion: calls failing it, and calls failing only it |
 | `qc/multiqc/chip_qc.html`, `qc/qc_flags.tsv` | QC report and per-sample flags, sex and identity check included |
 | `qc/somalier/relate.html` | somalier relatedness and sex report |
+| `reports/ch_report.html` | CH report (maftools): methods with the thresholds applied, filtering, VAF, recurrent positions, oncoplot, lollipop plots |
+| `reports/results/*.csv` | tables of the CH report: samples, calls, recurrent positions, filter summary |
 
 ## Report
 
-`analysis/ch_analysis.Rmd` builds a maftools report from the outputs:
+The CH report is rendered at the end of a run, once every sample has
+finished, with R from its own environment in the image. To render it again,
+for example after excluding samples, run the same command with
+`--cohort-only`:
 
 ```bash
-Rscript -e 'rmarkdown::render("analysis/ch_analysis.Rmd", params = list(project_dir = "/path/to/project"))'
+bash hemaclone.sh run \
+    --cores 4 --mem-gb 16 --batch-size 1 \
+    --resources-dir /path/to/hg38_resources \
+    --tmpdir /path/to/tmp \
+    --set ch_filter.min_dp=100 --set ch_filter.min_vaf=0.02 \
+    --set report.exclude_samples=exclude.txt \
+    --cohort-only
 ```
+
+- Paths are read inside the container: relative paths start from the project
+  folder; a file elsewhere needs its folder added with `--mount`.
+- `report.exclude_samples`: a file of sample IDs, one per line (`#` starts a
+  comment), left out of the report and its CSV tables. The tables in `chip/`
+  keep every sample; the report names the samples it leaves out.
+- `report.ch_rmd`: render your own version of the report. Copy the built-in
+  one out of the image, edit it, and pass its path:
+
+  ```bash
+  docker run --rm hemaclone:1.6.0 cat /opt/hemaclone/workflow/report/ch_report.Rmd > my_ch_report.Rmd
+  ```
+
+  then add `--set report.ch_rmd=my_ch_report.Rmd` to the command.
+- `report.enabled=false` skips the report.
+- If the report fails, the run says so and points to
+  `logs/ch_report/ch_report.log`; every other output is complete.
 
 ## Interpretation
 

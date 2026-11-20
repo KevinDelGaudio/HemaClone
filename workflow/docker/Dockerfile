@@ -18,6 +18,11 @@ COPY --chown=$MAMBA_USER:$MAMBA_USER workflow/docker/somalier.yaml /tmp/somalier
 RUN micromamba create -y -f /tmp/somalier.yaml \
     && micromamba clean --all --yes
 
+# 1c. R for the reports, in its own environment
+COPY --chown=$MAMBA_USER:$MAMBA_USER workflow/docker/report.yaml /tmp/report.yaml
+RUN micromamba create -y -f /tmp/report.yaml \
+    && micromamba clean --all --yes
+
 # 2. Workflow code and default config
 USER root
 COPY VERSION /opt/hemaclone/VERSION

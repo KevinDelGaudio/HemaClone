@@ -287,6 +287,16 @@ fail_if([t for t in needed_tools if shutil.which(t) is None], "Tools not found o
 fail_if([TOOLS["somalier"]] if shutil.which(TOOLS["somalier"]) is None else [],
         "somalier not found (tools.somalier)")
 
+# Reports
+REPORT = config["report"]
+CH_RMD = REPORT["ch_rmd"] or os.path.join(WORKFLOW_HOME, "workflow", "report", "ch_report.Rmd")
+if REPORT["enabled"]:
+    fail_if([TOOLS["rscript"]] if shutil.which(TOOLS["rscript"]) is None else [],
+            "Rscript for the reports not found (tools.rscript; or report.enabled=false)")
+    fail_if([CH_RMD] if not os.path.isfile(CH_RMD) else [], "Report source not found (report.ch_rmd)")
+    if REPORT["exclude_samples"] and not os.path.isfile(REPORT["exclude_samples"]):
+        raise PreflightError(f"Exclusion list not found (report.exclude_samples): {REPORT['exclude_samples']}")
+
 # Sex and identity check settings
 QC = config["qc"]
 if QC["expected_sex"]:
@@ -399,7 +409,10 @@ def sample_outputs():
 
 
 def cohort_outputs():
-    return ["qc/multiqc/chip_qc.html", "qc/qc_flags.tsv",
-            "chip/chip_candidates.tsv", "chip/chip_calls.maf",
-            "chip/chip_calls.oncoplot.maf", "chip/chip_samples.tsv",
-            "chip/chip_filter_counts.tsv"]
+    outputs = ["qc/multiqc/chip_qc.html", "qc/qc_flags.tsv",
+               "chip/chip_candidates.tsv", "chip/chip_calls.maf",
+               "chip/chip_calls.oncoplot.maf", "chip/chip_samples.tsv",
+               "chip/chip_filter_counts.tsv"]
+    if REPORT["enabled"]:
+        outputs.append("reports/ch_report.html")
+    return outputs

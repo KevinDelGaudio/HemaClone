@@ -38,6 +38,16 @@ batch_size: 1
 input:
   cram_reference: null
 
+# Reports rendered once the cohort is complete, into reports/ (HTML) and
+# reports/results/ (CSV). ch_rmd: null = the report shipped with the workflow
+# (workflow/report/ch_report.Rmd); a path = your own copy of it. exclude_samples:
+# a file of sample IDs (one per line) left out of the reports only; chip/
+# keeps every sample.
+report:
+  enabled: true
+  ch_rmd: null
+  exclude_samples: null
+
 # Sequencing design (flag: --data-type): "wes" or "wgs". WGS fits BQSR on
 # reference.wgs_intervals, writes the recalibrated BAM for the gene panel and
 # the contamination sites only, deletes the duplicate-marked BAM once QC and
@@ -105,6 +115,8 @@ tools:
   bwa: "bwa-mem2.avx2"
   # Separate environment in the image (workflow/docker/somalier.yaml)
   somalier: "/opt/conda/envs/somalier/bin/somalier"
+  # R for the reports, separate environment in the image (workflow/docker/report.yaml)
+  rscript: "/opt/conda/envs/report/bin/Rscript"
   # The run stops if `gatk --version` reports a different version. null = no check.
   gatk_version: "4.6.2.0"
 
@@ -286,6 +298,7 @@ job_sizes:
   wgs_metrics:             {threads: 1, mem_mb: 8000}
   somalier_extract:        {threads: 1, mem_mb: 2000}
   somalier_relate:         {threads: 1, mem_mb: 4000}
+  ch_report:               {threads: 1, mem_mb: 4000}
   multiqc:                 {threads: 1, mem_mb: 8000}
   qc_flags:                {threads: 1, mem_mb: 1000}
   chip_sample:             {threads: 1, mem_mb: 2000}
