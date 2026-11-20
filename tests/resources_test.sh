@@ -5,8 +5,8 @@
 #
 #   bash tests/resources_test.sh IMAGE RESOURCES_DIR
 #
-# Real bwa-mem2 and gatk BedToIntervalList run on a 3-contig reference with an
-# ALT contig. The Funcotator step is pre-seeded (the real data sources are tens
+# Real bwa-mem2, gatk BedToIntervalList, bgzip and tabix run on a 3-contig
+# reference with an ALT contig and a GIAB-style repeats BED. The Funcotator step is pre-seeded (the real data sources are tens
 # of GB): a folder with a GENCODE-style GTF and its manifest row, so the step
 # is skipped as on a re-run. The resulting folder is complete for a run with
 # default file names, and the gene panel BED is checked against the expected
@@ -64,6 +64,12 @@ for name in ["af-only-gnomad.hg38.vcf.gz", "af-only-gnomad.hg38.vcf.gz.tbi",
     with open(os.path.join(somatic, name), "wb") as handle:
         handle.write(os.urandom(2000))
 
+# GIAB-style repeats BED, plain gzip as published
+import gzip
+os.makedirs(os.path.join(work, "giab"))
+with gzip.open(os.path.join(work, "giab", "GRCh38_AllTandemRepeatsandHomopolymers_slop5.bed.gz"), "wt") as handle:
+    handle.write("chr1\t1995\t2010\nchr1\t5000\t5020\nchr2\t100\t130\n")
+
 # Kit targets: GENEA (two pieces), GENEB, GENED (at the end of chr1); GENEC uncovered
 with open(os.path.join(work, "kit.bed"), "w") as handle:
     handle.write("chr1\t950\t1100\tt1\nchr1\t1500\t1600\tt2\nchr2\t4950\t5100\tt3\nchr1\t19900\t20000\tt4\n")
@@ -97,6 +103,7 @@ docker run --rm -u "$(id -u):$(id -g)" \
             --cores 2 --mem-gb 4 --tmpdir '${WORK}/tmp' \
             --set resources.bundle_url=http://127.0.0.1:8765/bundle \
             --set resources.somatic_url=http://127.0.0.1:8765/somatic \
+            --set resources.repeats_url=http://127.0.0.1:8765/giab/GRCh38_AllTandemRepeatsandHomopolymers_slop5.bed.gz \
             --set 'resources.panel_genes=[GENEA,GENEB,GENEC,GENED]'
     "
 
@@ -107,7 +114,9 @@ if [[ "$(cat "${DEST}/chip_genes.bed")" != "$EXPECTED" ]]; then
     exit 1
 fi
 for name in Homo_sapiens_assembly38.fasta.alt Homo_sapiens_assembly38.fasta.bwt.2bit.64 \
-            exome_targets.hg38.interval_list MANIFEST.tsv; do
+            exome_targets.hg38.interval_list MANIFEST.tsv \
+            GRCh38_AllTandemRepeatsandHomopolymers_slop5.bed.gz \
+            GRCh38_AllTandemRepeatsandHomopolymers_slop5.bed.gz.tbi; do
     [[ -s "${DEST}/${name}" ]] || { echo "ERROR: ${name} missing or empty" >&2; exit 1; }
 done
 echo "Resources test passed: $(($(wc -l < "${DEST}/MANIFEST.tsv") - 1)) files in the manifest, panel as expected."

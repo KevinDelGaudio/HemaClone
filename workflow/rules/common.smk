@@ -143,6 +143,8 @@ required_files = {
     "bwa-mem2 index": f"{REF['fasta']}.bwt.2bit.64",
     "exome intervals": REF["exome_intervals"],
     "gene panel BED": REF["gene_panel_bed"],
+    "repeats BED": REF["repeats_bed"],
+    "repeats BED index": f"{REF['repeats_bed']}.tbi",
 }
 for key in ["gnomad", "common_variants", "dbsnp", "mills"]:
     required_files[key] = REF[key]
@@ -153,6 +155,21 @@ missing_resources = [f"{label}: {path}" for label, path in required_files.items(
 if not os.path.isdir(REF["funcotator_ds"]):
     missing_resources.append(f"Funcotator data sources: {REF['funcotator_ds']}")
 fail_if(missing_resources, "Reference resources not found")
+
+# Indel thresholds act on calls that already passed ch_filter.min_vaf and
+# chip.min_alt_reads: a lower value would silently change nothing.
+CHIP = config["chip"]
+too_low = []
+for key, floor_key, floor in [
+        ("indel_min_vaf", "ch_filter.min_vaf", config["ch_filter"]["min_vaf"]),
+        ("repeat_indel_min_vaf", "ch_filter.min_vaf", config["ch_filter"]["min_vaf"]),
+        ("indel_min_alt_reads", "chip.min_alt_reads", CHIP["min_alt_reads"]),
+        ("repeat_indel_min_alt_reads", "chip.min_alt_reads", CHIP["min_alt_reads"])]:
+    if CHIP[key] < floor:
+        too_low.append(f"chip.{key} = {CHIP[key]} is below {floor_key} = {floor}")
+if CHIP["max_sor"] <= 0:
+    too_low.append(f"chip.max_sor must be positive, got {CHIP['max_sor']}")
+fail_if(too_low, "Indel and strand thresholds can only be stricter than the general ones")
 
 # ALT and fix-patch contigs need bwa-mem2's ALT contig list (<FASTA>.alt): without
 # it they count as ordinary chromosomes, reads in the regions they duplicate get
@@ -306,4 +323,5 @@ def sample_outputs():
 def cohort_outputs():
     return ["qc/multiqc/chip_qc.html", "qc/qc_flags.tsv",
             "chip/chip_candidates.tsv", "chip/chip_calls.maf",
-            "chip/chip_calls.oncoplot.maf", "chip/chip_samples.tsv"]
+            "chip/chip_calls.oncoplot.maf", "chip/chip_samples.tsv",
+            "chip/chip_filter_counts.tsv"]

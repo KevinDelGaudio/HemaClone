@@ -48,6 +48,9 @@ reference:
   dbsnp: "Homo_sapiens_assembly38.dbsnp138.vcf"
   mills: "Mills_and_1000G_gold_standard.indels.hg38.vcf.gz"
   funcotator_ds: "funcotator_dataSources"
+  # GIAB tandem repeats and homopolymers (bgzipped, tabix-indexed), for the
+  # repeat-indel criterion
+  repeats_bed: "GRCh38_AllTandemRepeatsandHomopolymers_slop5.bed.gz"
 
 # A reference with ALT or fix-patch contigs (names ending in _alt or _fix) needs
 # the ALT contig list <FASTA>.alt next to the bwa-mem2 index: without it, reads
@@ -61,6 +64,9 @@ resources:
   # GATK hg38 reference bundle and somatic resources
   bundle_url: "https://storage.googleapis.com/gcp-public-data--broad-references/hg38/v0"
   somatic_url: "https://storage.googleapis.com/gatk-best-practices/somatic-hg38"
+  # GIAB genome stratifications (Dwarshuis et al. 2024), tandem repeats and
+  # homopolymers, saved bgzipped and indexed under reference.repeats_bed
+  repeats_url: "https://ftp-trace.ncbi.nlm.nih.gov/ReferenceSamples/giab/release/genome-stratifications/v3.3/GRCh38@all/LowComplexity/GRCh38_AllTandemRepeatsandHomopolymers_slop5.bed.gz"
   # Exome kit target BED, hg38 with chr names (flag: --targets)
   targets: null
   # CH gene panel: gene spans from the Funcotator GENCODE annotation,
@@ -118,6 +124,16 @@ chip:
   min_alt_reads: 3
   max_gnomad_af: 0.01
   large_clone_vaf: 0.10
+  # Strand bias: strand odds ratio from FORMAT/SB (GATK formula, +1 per count)
+  max_sor: 3
+  # Indels: thresholds on top of ch_filter.min_vaf and min_alt_reads; can only
+  # be stricter (the defaults change nothing)
+  indel_min_vaf: 0.02
+  indel_min_alt_reads: 3
+  # Indels in a tandem repeat or homopolymer (Mutect2 INFO/STR or the GIAB
+  # repeats BED): stricter thresholds instead of exclusion
+  repeat_indel_min_vaf: 0.05
+  repeat_indel_min_alt_reads: 5
   variant_classes:
     - Missense_Mutation
     - Nonsense_Mutation

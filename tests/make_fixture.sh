@@ -49,7 +49,9 @@ for name in \
     small_exac_common_3.hg38.vcf.gz small_exac_common_3.hg38.vcf.gz.tbi \
     Homo_sapiens_assembly38.dbsnp138.vcf Homo_sapiens_assembly38.dbsnp138.vcf.idx \
     Mills_and_1000G_gold_standard.indels.hg38.vcf.gz Mills_and_1000G_gold_standard.indels.hg38.vcf.gz.tbi \
-    1000g_pon.hg38.vcf.gz 1000g_pon.hg38.vcf.gz.tbi
+    1000g_pon.hg38.vcf.gz 1000g_pon.hg38.vcf.gz.tbi \
+    GRCh38_AllTandemRepeatsandHomopolymers_slop5.bed.gz \
+    GRCh38_AllTandemRepeatsandHomopolymers_slop5.bed.gz.tbi
 do
     : > "${RESOURCES_DIR}/${name}"
 done

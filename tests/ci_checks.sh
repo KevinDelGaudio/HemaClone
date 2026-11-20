@@ -13,6 +13,7 @@
 # 4. Full launcher dry run, with the launcher copied out of the image
 # 5. Dry run of the whole job graph, cohort steps included
 # 6. Snakemake lint: fails on any lint but the per-rule container lint
+# 7. CHIP classification of a synthetic sample (tests/chip_sample_test.py)
 #
 # Nothing is aligned or called: these checks catch broken rules, settings,
 # preflight checks and launcher logic, not wrong results.
@@ -108,5 +109,9 @@ if [[ "$OTHER_LINTS" -ne 0 ]]; then
     echo "ERROR: fix the lints above" >&2
     exit 1
 fi
+
+echo "== 7. CHIP classification"
+docker run --rm -u "$(id -u):$(id -g)" -v "${TESTS_DIR}:/tests:ro" -e HOME=/tmp -w /tmp \
+    "$IMAGE" python /tests/chip_sample_test.py "$IMAGE_HOME"
 
 echo "All checks passed."
