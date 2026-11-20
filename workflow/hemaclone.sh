@@ -8,6 +8,7 @@
 #   bash hemaclone.sh samplesheet              only build config/samples.tsv, to inspect it
 #   bash hemaclone.sh resources --resources-dir DIR --targets KIT.bed --cores N --mem-gb M
 #                                              download and build the hg38 resources into DIR
+#                                              (without --targets: a folder for WGS only)
 #   bash hemaclone.sh shell                    shell inside the container
 #   bash hemaclone.sh build                    build the image (from a code checkout)
 #
@@ -244,10 +245,12 @@ case "$COMMAND" in
         resolve_image; resolve_code
         check_limits
         [[ -n "$RESOURCES_DIR" ]] || die "resources needs --resources-dir: the folder to fill"
-        [[ -n "$TARGETS" ]] || die "resources needs --targets: the exome kit target BED (hg38)"
-        [[ -f "$TARGETS" ]] || die "targets BED not found: $TARGETS"
         mkdir -p "$(absolute "$RESOURCES_DIR")" || die "cannot create resources folder: $RESOURCES_DIR"
-        EXTRA_MOUNTS+=( "$(dirname "$(absolute "$TARGETS")")" )
+        # Without --targets the folder serves WGS runs only (gene panel from exons)
+        if [[ -n "$TARGETS" ]]; then
+            [[ -f "$TARGETS" ]] || die "targets BED not found: $TARGETS"
+            EXTRA_MOUNTS+=( "$(dirname "$(absolute "$TARGETS")")" )
+        fi
         build_mounts
         echo "Image           : ${IMAGE}  (code from ${MODE}: ${CODE_HOME})"
         echo "Container limits: ${CORES} cores, ${MEM_GB} GB RAM (hard)"

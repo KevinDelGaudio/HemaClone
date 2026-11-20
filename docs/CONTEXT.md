@@ -102,7 +102,7 @@ bash hemaclone.sh run --cores 32 --mem-gb 96 --batch-size 1 \
 
 ## 5. Steps
 
-0. **Resources** (`bash hemaclone.sh resources`, `workflow/scripts/get_resources.py`), once per resources folder: GATK hg38 reference bundle (FASTA, `.fai`, `.dict`, ALT contig list saved as `<FASTA>.alt` for alt-aware bwa-mem2 mapping, dbSNP138, Mills/1000G indels, WGS calling regions) and somatic resources (gnomAD AF-only, small ExAC common sites, 1000 Genomes PoN), each checked against the server's size and MD5; bwa-mem2 index; Funcotator somatic data sources; GIAB tandem repeats and homopolymers BED (kept as downloaded under `giab/`, bgzipped and tabix-indexed as `reference.repeats_bed`); the kit BED (`--targets`) as an interval list; the CH gene panel BED = gene spans of `resources.panel_genes` from the Funcotator GENCODE GTF, intersected with the kit targets, each piece padded by `resources.panel_padding` (50 bp) and merged per gene. Genes missing from the GTF or found at two loci stop the step; genes without kit targets are listed. `MANIFEST.tsv` records source, size, MD5 and date of every file; finished files are skipped on re-runs.
+0. **Resources** (`bash hemaclone.sh resources`, `workflow/scripts/get_resources.py`), once per resources folder: GATK hg38 reference bundle (FASTA, `.fai`, `.dict`, ALT contig list saved as `<FASTA>.alt` for alt-aware bwa-mem2 mapping, dbSNP138, Mills/1000G indels, WGS calling regions) and somatic resources (gnomAD AF-only, small ExAC common sites, 1000 Genomes PoN), each checked against the server's size and MD5; bwa-mem2 index; Funcotator somatic data sources; GIAB tandem repeats and homopolymers BED (kept as downloaded under `giab/`, bgzipped and tabix-indexed as `reference.repeats_bed`); the kit BED (`--targets`) as an interval list; the CH gene panel BED = gene spans of `resources.panel_genes` from the Funcotator GENCODE GTF, intersected with the kit targets, each piece padded by `resources.panel_padding` (50 bp) and merged per gene. Without `--targets` (a folder for WGS only) no exome interval list is built and the panel is the exons of the same genes (every transcript, inside the gene span), padded and merged the same way. Genes missing from the GTF or found at two loci stop the step; genes without kit targets are listed. `MANIFEST.tsv` records source, size, MD5 and date of every file; finished files are skipped on re-runs.
 1. **Sample sheet** built from `fastq/`. Lane-split FASTQs stay separate units with their own read groups; one BAM per sample. Preflight checks: required columns, name characters, duplicated units/read groups/FASTQs, case-only name clashes, missing resources, a reference with ALT or fix-patch contigs but no `<FASTA>.alt` (stops unless `reference_checks.allow_alt_without_index`), PoN files, tools, writable tmpdir, job sizes within the memory budget.
    BAM/CRAM files in the same folder are one unit each (`B1`, path in the sheet's `bam` column, empty `fq1`/`fq2`); sample name from the file name (a different header `SM` is a warning), `LB` from the header when it has one library. CRAM needs `input.cram_reference` (checked at preflight). Sheets without a `bam` column are FASTQ-only.
 2. **FASTQ check** per pair: complete gzip decompression, matching read counts and read names in both mates. Truncated pairs fail the sample. BAM/CRAM units: `samtools quickcheck -u` (`bam_check`; unaligned BAMs accepted).
@@ -124,7 +124,9 @@ Mutect2 calls only inside `reference.gene_panel_bed`. The resources command
 builds it as `chip_genes.bed`: the gene spans of `resources.panel_genes` (81
 genes) from the Funcotator GENCODE annotation, intersected with the kit
 targets given with `--targets` and padded by `resources.panel_padding` (50 bp,
-for splice sites). Gene spans alone would make Mutect2 scan introns without
+for splice sites). Without `--targets`, for WGS, it is the exons of the same
+genes, padded the same way: intronic calls would fail the protein-altering
+criterion anyway. Gene spans alone would make Mutect2 scan introns without
 reads and make panel depth averages meaningless on exome data. Any other BED
 can be given with `--set reference.gene_panel_bed=...`; changing it re-runs
 Mutect2 and the steps after it.
@@ -276,7 +278,7 @@ pull request per change, merged into `main` with `VERSION` set to 1.6.0.
 | Polish | conservative clean-up, outputs identical, checked on a test run |
 | Resources | `hemaclone.sh resources` downloads and indexes the hg38 resources and writes a manifest with sources and checksums; the CH gene panel BED is built from a gene list kept in the repository; exome targets stay user-supplied |
 | Reference | GATK `Homo_sapiens_assembly38` with its ALT contig list (alt-aware bwa-mem2 mapping); a reference with ALT or fix-patch contigs and no list stops the run |
-| Gene panel | 81 genes in `resources.panel_genes`; gene spans from the Funcotator GENCODE GTF intersected with the kit targets, padded 50 bp |
+| Gene panel | 81 genes in `resources.panel_genes`; gene spans from the Funcotator GENCODE GTF intersected with the kit targets, padded 50 bp; without kit targets (WGS), the genes' exons padded 50 bp |
 | Strand bias | new criterion: strand odds ratio (SOR, from `FORMAT/SB`) at most `chip.max_sor` (3); reads per strand reported as columns, not filtered |
 | Indels in repeats | stricter VAF and alt-read thresholds for indels in tandem repeats or homopolymers (Mutect2 `STR` and the GIAB tandem-repeat and homopolymer BED), not exclusion; defaults VAF 0.05 and 5 alt reads, to be tuned with the benchmark; ASXL1 G646 is subject to them, not exempt |
 | Indels | separate VAF and alt-read thresholds for indels and SNVs |

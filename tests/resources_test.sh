@@ -101,10 +101,16 @@ gencode = os.path.join(dest, "funcotator_dataSources", "gencode", "hg38")
 os.makedirs(gencode)
 genes = [("chr1", 1001, 1600, "GENEA"), ("chr2", 5001, 5200, "GENEB"),
          ("chr2", 9001, 9500, "GENEC"), ("chr1", 19950, 20000, "GENED")]
+# Exons (1-based), for the panel built without kit targets
+exons = {"GENEA": [(1001, 1100), (1501, 1600)], "GENEB": [(5001, 5100), (5151, 5200)],
+         "GENEC": [(9001, 9100)], "GENED": [(19950, 20000)]}
 with open(os.path.join(gencode, "gencode.v43.annotation.gtf"), "w") as handle:
     for contig, start, end, name in genes:
-        handle.write(f'{contig}\tHAVANA\tgene\t{start}\t{end}\t.\t+\t.\t'
-                     f'gene_id "{name}.1"; gene_type "protein_coding"; gene_name "{name}";\n')
+        attributes = f'gene_id "{name}.1"; gene_type "protein_coding"; gene_name "{name}";'
+        handle.write(f'{contig}\tHAVANA\tgene\t{start}\t{end}\t.\t+\t.\t{attributes}\n')
+        for e_start, e_end in exons[name]:
+            handle.write(f'{contig}\tHAVANA\texon\t{e_start}\t{e_end}\t.\t+\t.\t'
+                         f'{attributes} transcript_id "{name}-201";\n')
 version = os.path.join(dest, "funcotator_dataSources", "VERSION")
 with open(version, "w") as handle:
     handle.write("test-seed\n")
@@ -142,4 +148,30 @@ for name in Homo_sapiens_assembly38.fasta.alt Homo_sapiens_assembly38.fasta.bwt.
             GRCh38_AllTandemRepeatsandHomopolymers_slop5.bed.gz.tbi sites.hg38.vcf.gz; do
     [[ -s "${DEST}/${name}" ]] || { echo "ERROR: ${name} missing or empty" >&2; exit 1; }
 done
-echo "Resources test passed: $(($(wc -l < "${DEST}/MANIFEST.tsv") - 1)) files in the manifest, panel as expected."
+# WGS-only folder: the same command without --targets builds the panel from
+# the genes' exons (written under another name, so the folder stays complete
+# for the exome dry runs that follow)
+docker run --rm -u "$(id -u):$(id -g)" \
+    -v "${WORK}:${WORK}" -v "${DEST}:${DEST}" -w "$WORK" \
+    "$IMAGE" bash -c "
+        set -e
+        python -m http.server 8765 --bind 127.0.0.1 > server.log 2>&1 &
+        sleep 2
+        python /opt/hemaclone/workflow/scripts/get_resources.py \
+            --resources-dir '$DEST' \
+            --cores 2 --mem-gb 4 --tmpdir '${WORK}/tmp' \
+            --set resources.bundle_url=http://127.0.0.1:8765/bundle \
+            --set resources.somatic_url=http://127.0.0.1:8765/somatic \
+            --set resources.repeats_url=http://127.0.0.1:8765/giab/GRCh38_AllTandemRepeatsandHomopolymers_slop5.bed.gz \
+            --set resources.somalier_sites_url=http://127.0.0.1:8765/somalier/sites.hg38.vcf.gz \
+            --set 'resources.panel_genes=[GENEA,GENEB,GENEC,GENED]' \
+            --set reference.gene_panel_bed=chip_genes.wgs.bed
+    "
+EXPECTED_WGS=$'chr1\t950\t1150\tGENEA\nchr1\t1450\t1650\tGENEA\nchr1\t19899\t20000\tGENED\nchr2\t4950\t5250\tGENEB\nchr2\t8950\t9150\tGENEC'
+if [[ "$(cat "${DEST}/chip_genes.wgs.bed")" != "$EXPECTED_WGS" ]]; then
+    echo "ERROR: the panel built without kit targets differs from the expected one:" >&2
+    cat "${DEST}/chip_genes.wgs.bed" >&2
+    exit 1
+fi
+
+echo "Resources test passed: $(($(wc -l < "${DEST}/MANIFEST.tsv") - 1)) files in the manifest, panels as expected."

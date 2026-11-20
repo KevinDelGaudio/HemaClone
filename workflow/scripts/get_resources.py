@@ -19,8 +19,10 @@ with the same size and checksum:
   5. bwa-mem2 index of the FASTA
   6. Funcotator somatic data sources
   7. Exome intervals: the kit BED given with --targets, as an interval list
-  8. CH gene panel BED: gene spans from the Funcotator GENCODE annotation,
-     intersected with the kit targets and padded
+     (skipped without --targets: a folder for WGS only)
+  8. CH gene panel BED, from the Funcotator GENCODE annotation: with --targets,
+     gene spans intersected with the kit targets; without, the genes' exons;
+     padded in both cases
 
 Downloads resume after an interruption and are checked against the size and,
 when the server provides one, the MD5 checksum. MANIFEST.tsv records every
@@ -107,7 +109,8 @@ def parse_args(argv):
     parser = argparse.ArgumentParser(
         description="Download and build the hg38 resources HemaClone needs.")
     parser.add_argument("--resources-dir", required=True, help="folder to fill (created if missing)")
-    parser.add_argument("--targets", default=None, help="exome kit target BED, hg38 (resources.targets)")
+    parser.add_argument("--targets", default=None,
+                        help="exome kit target BED, hg38 (resources.targets); leave out for a WGS-only folder")
     parser.add_argument("--cores", type=int, required=True, help="CPU limit of the container")
     parser.add_argument("--mem-gb", type=float, required=True, help="memory limit, GB")
     parser.add_argument("--tmpdir", default=None, help="scratch folder (default: tmpdir)")
@@ -407,17 +410,21 @@ def merge(intervals):
     return merged
 
 
-def gene_spans(gtf, genes, lengths):
-    """Gene name -> (contig, start, end) from the 'gene' records of a GENCODE
-    GTF. Stops when a gene is missing or found at more than one locus."""
+def gene_records(gtf, genes, lengths):
+    """Gene spans and exons of the wanted genes, from the 'gene' and 'exon'
+    records of a GENCODE GTF, in one pass. Returns gene name -> (contig,
+    start, end) and gene name -> list of exons (contig, start, end), 0-based
+    half-open; exons are those of every transcript, inside the gene's span.
+    Stops when a gene is missing or found at more than one locus."""
     wanted = set(genes)
     found = {}
+    exons = {}
     with open(gtf) as handle:
         for line in handle:
             if line.startswith("#"):
                 continue
             fields = line.rstrip("\n").split("\t")
-            if len(fields) < 9 or fields[2] != "gene":
+            if len(fields) < 9 or fields[2] not in ("gene", "exon"):
                 continue
             name = None
             for attribute in fields[8].split(";"):
@@ -425,8 +432,13 @@ def gene_spans(gtf, genes, lengths):
                 if attribute.startswith("gene_name "):
                     name = attribute.split(" ", 1)[1].strip('"')
                     break
-            if name in wanted and fields[0] in lengths:
-                found.setdefault(name, set()).add((fields[0], int(fields[3]) - 1, int(fields[4])))
+            if name not in wanted or fields[0] not in lengths:
+                continue
+            record = (fields[0], int(fields[3]) - 1, int(fields[4]))
+            if fields[2] == "gene":
+                found.setdefault(name, set()).add(record)
+            else:
+                exons.setdefault(name, []).append(record)
     missing = sorted(wanted - set(found))
     if missing:
         fail(f"genes not found in {gtf}: {', '.join(missing)}")
@@ -434,7 +446,12 @@ def gene_spans(gtf, genes, lengths):
     if ambiguous:
         listing = "; ".join(f"{name}: {sorted(loci)}" for name, loci in sorted(ambiguous.items()))
         fail(f"genes at more than one locus in {gtf}: {listing}")
-    return {name: next(iter(loci)) for name, loci in found.items()}
+    spans = {name: next(iter(loci)) for name, loci in found.items()}
+    inside = {}
+    for name, records in exons.items():
+        contig, start, end = spans[name]
+        inside[name] = [r for r in records if r[0] == contig and r[1] >= start and r[2] <= end]
+    return spans, inside
 
 
 def build_panel(dest, rows, config, targets, logs):
@@ -450,19 +467,27 @@ def build_panel(dest, rows, config, targets, logs):
     lengths = contig_lengths(dest)
     order = {name: i for i, name in enumerate(lengths)}
 
-    spans = gene_spans(gtf, genes, lengths)
-    target_intervals = sorted(read_bed(targets, lengths), key=lambda t: (order[t[0]], t[1]))
+    spans, exons = gene_records(gtf, genes, lengths)
+    target_intervals = []
+    if targets:
+        target_intervals = sorted(read_bed(targets, lengths), key=lambda t: (order[t[0]], t[1]))
 
     panel = []          # (contig, start, end, gene)
     uncovered = []
     for gene in genes:
         contig, g_start, g_end = spans[gene]
         pieces = []
-        for t_contig, t_start, t_end in target_intervals:
-            if t_contig == contig and t_start < g_end and t_end > g_start:
-                start = max(0, max(t_start, g_start) - padding)
-                end = min(lengths[contig], min(t_end, g_end) + padding)
-                pieces.append((contig, start, end))
+        if targets:
+            # Exome: the parts of the gene span the kit captures
+            for t_contig, t_start, t_end in target_intervals:
+                if t_contig == contig and t_start < g_end and t_end > g_start:
+                    start = max(0, max(t_start, g_start) - padding)
+                    end = min(lengths[contig], min(t_end, g_end) + padding)
+                    pieces.append((contig, start, end))
+        else:
+            # Genome: the gene's exons
+            for e_contig, e_start, e_end in exons.get(gene, []):
+                pieces.append((e_contig, max(0, e_start - padding), min(lengths[e_contig], e_end + padding)))
         if not pieces:
             uncovered.append(gene)
             continue
@@ -478,12 +503,14 @@ def build_panel(dest, rows, config, targets, logs):
 
     covered = len(genes) - len(uncovered)
     total_bp = sum(end - start for _, start, end, _ in panel)
+    source = f"kit targets {os.path.basename(targets)}" if targets else "exons"
     print(f"  {panel_name}: {len(panel)} intervals, {total_bp:,} bp, "
-          f"{covered} of {len(genes)} genes covered by the kit (padding {padding} bp)")
+          f"{covered} of {len(genes)} genes in the panel ({source}, padding {padding} bp)")
     if uncovered:
-        print(f"  WARNING: genes with no kit target, not called: {', '.join(uncovered)}", flush=True)
+        reason = "no kit target" if targets else "no exon record"
+        print(f"  WARNING: genes with {reason}, not called: {', '.join(uncovered)}", flush=True)
     record_file(rows, dest, panel_name,
-                f"built: {len(genes)} genes from {os.path.basename(gtf)} x {os.path.basename(targets)}, "
+                f"built: {len(genes)} genes from {os.path.basename(gtf)}, {source}, "
                 f"padding {padding}; not covered: {', '.join(uncovered) or 'none'}")
     write_manifest(dest, rows)
 
@@ -519,9 +546,7 @@ def main(argv):
     targets = resources["targets"]
 
     problems = []
-    if not targets:
-        problems.append("no exome kit targets: pass --targets KIT.bed (hg38, chr names)")
-    elif not os.path.isfile(targets):
+    if targets and not os.path.isfile(targets):
         problems.append(f"targets BED not found: {targets}")
     for tool in ("gatk", "bwa-mem2", "bgzip", "tabix"):
         if shutil.which(tool) is None:
@@ -542,7 +567,7 @@ def main(argv):
 
     print("Resources")
     print(f"  folder       : {dest}")
-    print(f"  kit targets  : {targets}")
+    print(f"  kit targets  : {targets or 'none (WGS only: no exome intervals; panel from exons)'}")
     print(f"  panel        : {len(resources['panel_genes'])} genes, padding {resources['panel_padding']} bp")
     print(f"  bundle       : {resources['bundle_url']}")
     print(f"  somatic      : {resources['somatic_url']}")
@@ -567,7 +592,11 @@ def main(argv):
     step("6/8 Funcotator somatic data sources")
     get_funcotator(dest, rows, config["reference"]["funcotator_ds"], tmpdir, logs)
     step("7/8 Exome intervals")
-    kit = build_exome_intervals(dest, rows, config, targets, logs)
+    kit = None
+    if targets:
+        kit = build_exome_intervals(dest, rows, config, targets, logs)
+    else:
+        print("  skipped: no --targets. This folder serves WGS runs only (--data-type wgs).")
     step("8/8 CH gene panel")
     build_panel(dest, rows, config, kit, logs)
 

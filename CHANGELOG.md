@@ -31,6 +31,8 @@ the start to compare with 1.5.0 results.
   `resources.panel_genes` from the Funcotator GENCODE annotation, intersected
   with the kit targets, padded by `resources.panel_padding`). Writes
   `MANIFEST.tsv`. New config sections `resources` and `reference_checks`.
+  Without `--targets` the folder serves WGS runs: no exome interval list, and
+  the panel is the genes' exons, padded the same way.
 - Preflight stops a run whose reference has ALT or fix-patch contigs but no
   `<FASTA>.alt` (reads in the duplicated regions would get mapping quality 0);
   `reference_checks.allow_alt_without_index` allows it, with a warning.
