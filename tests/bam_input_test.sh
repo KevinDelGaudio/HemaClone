@@ -73,13 +73,13 @@ PY
 samtools view -b -o fastq/SIMD.bam reads.sam
 samtools view -C -T '${RESOURCES}/Homo_sapiens_assembly38.fasta' -o fastq/SIME.cram reads.sam
 python ${IMAGE_HOME}/workflow/scripts/make_samplesheet.py --fastq-dir fastq --out config/samples.tsv
-snakemake --snakefile ${IMAGE_HOME}/workflow/Snakefile --directory . \
+snakemake qc/bam_check/SIMD.B1.ok qc/bam_check/SIME.B1.ok \
+    bam/units/SIMD.B1.remapped.bam bam/units/SIME.B1.remapped.bam \
+    --snakefile ${IMAGE_HOME}/workflow/Snakefile --directory . \
     --workflow-profile ${IMAGE_HOME}/config/profile \
     --cores 2 --resources mem_mb=3000 \
     --configfile ${WORK}/settings.yaml --config samples=config/samples.tsv \
-    --notemp --quiet rules \
-    qc/bam_check/SIMD.B1.ok qc/bam_check/SIME.B1.ok \
-    bam/units/SIMD.B1.remapped.bam bam/units/SIME.B1.remapped.bam
+    --notemp --quiet rules
 for sample in SIMD SIME; do
     out=bam/units/\${sample}.B1.remapped.bam
     total=\$(samtools view -c \$out)
