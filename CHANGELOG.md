@@ -65,6 +65,9 @@ Changes merged into `release/1.6.0`.
   header SM different from the file name is a warning. FastQC runs on FASTQ
   units only. FASTQ-only runs unchanged (same planned jobs and commands);
   sheets without a `bam` column still load.
+- The memory-budget preflight check covers only the jobs a run can use (the
+  BAM/CRAM rules with BAM/CRAM units, the coverage metrics of the data type),
+  so an unused job's size never stops a run.
 - `tests/chip_sample_test.py`: classification of a synthetic sample, one call
   per case, run in CI inside the image.
 - CI builds a resources folder from a tiny bundle with the real tools

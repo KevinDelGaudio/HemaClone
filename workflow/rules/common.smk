@@ -40,10 +40,6 @@ if budget_mem is None:
     raise PreflightError("No memory budget set. Launch with: bash workflow/hemaclone.sh run ... "
                          "(or, without Docker, python workflow/scripts/run_batches.py ...).")
 
-oversized = [f"{rule}: {size['mem_mb']} MB" for rule, size in config["job_sizes"].items()
-             if size["mem_mb"] > budget_mem]
-fail_if(oversized, f"Jobs larger than the memory budget of {budget_mem} MB")
-
 log_preflight(f"budget: {budget_cores} cores, {budget_mem} MB")
 
 
@@ -111,6 +107,18 @@ if any(p.endswith(".cram") for p in all_bam):
             "CRAM reference files not found")
 if is_bam.any():
     log_preflight(f"BAM/CRAM units: {int(is_bam.sum())}, re-aligned; FastQC runs on FASTQ units only")
+
+# Job sizes within the memory budget, for the jobs this run can use: the
+# BAM/CRAM rules only with BAM/CRAM units, the coverage rule of the data type
+unused_rules = set()
+if not is_bam.any():
+    unused_rules |= {"bam_check", "bam_remap"}
+if not has_fastq.any():
+    unused_rules |= {"fastq_check", "bwa_map", "fastqc"}
+unused_rules.add("hs_metrics" if config["data_type"] == "wgs" else "wgs_metrics")
+oversized = [f"{rule}: {size['mem_mb']} MB" for rule, size in config["job_sizes"].items()
+             if rule not in unused_rules and size["mem_mb"] > budget_mem]
+fail_if(oversized, f"Jobs larger than the memory budget of {budget_mem} MB")
 
 sample_names = pd.Series(sorted(units["sample"].unique()))
 fail_if(sample_names[sample_names.str.lower().duplicated(keep=False)].tolist(),
