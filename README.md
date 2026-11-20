@@ -1,19 +1,25 @@
 # HemaClone
 
-HemaClone calls clonal haematopoiesis (CH) variants from blood exome
-sequencing without a matched normal, and classifies each sample as CHIP+ or
-CHIP-. It runs end to end, from FASTQ files to maftools-ready MAFs, in a
-single versioned Docker image with hard CPU and memory limits.
+HemaClone calls clonal haematopoiesis (CH) variants from blood exome or
+genome sequencing without a matched normal, and classifies each sample as
+CHIP+ or CHIP-. It runs end to end, from FASTQ, BAM or CRAM files to
+maftools-ready MAFs and reports, in a single versioned Docker image with hard
+CPU and memory limits.
 
-- Alignment (bwa-mem2), duplicate marking and base quality recalibration (GATK4)
+- One command to download and build the hg38 resources, with a manifest of sources and checksums
+- Alignment (alt-aware bwa-mem2; BAM and CRAM input re-aligned), duplicate marking and base quality recalibration (GATK4)
 - Tumor-only Mutect2 on a CH gene panel, with read orientation and contamination models
 - External panel of normals (flag or filter), with known CH hotspots exempt
 - Allele-matched gnomAD frequencies, Funcotator annotation
 - CH classification with one pass/fail column per criterion: protein-altering
   class, alternate reads, depth, VAF window, binomial test against the
-  heterozygous fraction, gnomAD AF, panel of normals
+  heterozygous fraction, gnomAD AF, panel of normals, strand odds ratio,
+  indel thresholds, stricter thresholds for indels in tandem repeats and
+  homopolymers
 - Cohort tables and MAFs for maftools, CHIP- samples included
-- QC: FastQC, alignment, insert size and hybrid-selection metrics, MultiQC, per-sample flags
+- QC: FastQC, alignment, insert size and capture or genome-wide coverage
+  metrics, MultiQC, per-sample flags, sex and sample identity check (somalier)
+- Reports rendered at the end of a run: CH report, QC report and methods record
 
 Design, criteria and outputs in detail: [`docs/CONTEXT.md`](docs/CONTEXT.md).
 Changes between versions: [`CHANGELOG.md`](CHANGELOG.md). How to contribute: [`CONTRIBUTING.md`](CONTRIBUTING.md).
@@ -61,7 +67,8 @@ bash hemaclone.sh resources \
   normals, from GATK's public buckets; downloads resume and are checked
   against the server's size and MD5.
 - GIAB tandem-repeat and homopolymer BED (Dwarshuis et al. 2024), for the
-  stricter thresholds on indels in repeats.
+  stricter thresholds on indels in repeats, and the somalier hg38 sites, for
+  the sex and identity check.
 - bwa-mem2 index (needs much memory: if it is killed, raise `--mem-gb`),
   Funcotator somatic data sources.
 - The kit BED as an interval list, and the CH gene panel BED: the genes in
@@ -90,6 +97,7 @@ bash hemaclone.sh run \
 - `--batch-size N` runs N samples at a time; each batch finishes before the next starts.
 - `--dry-run` shows the planned jobs; `bash hemaclone.sh run --help` lists every flag.
 - Any setting in `config/config.yaml` can be changed with `--set KEY=VALUE`.
+- The settings of every run are recorded in `logs/batches/`.
 
 ### BAM or CRAM input
 
@@ -155,7 +163,6 @@ keeps only the gene panel and the contamination sites, the duplicate-marked
 BAM is deleted once QC and BQSR are done (about 100 GB per 30x sample), and QC
 uses genome-wide coverage (`qc.thresholds_wgs`). The exome interval list is
 not needed.
-- The settings of every run are recorded in `logs/batches/`.
 
 ## Main outputs
 

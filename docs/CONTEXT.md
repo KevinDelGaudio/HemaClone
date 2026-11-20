@@ -10,8 +10,8 @@ Version history is in `CHANGELOG.md`.
 ## 1. Purpose
 
 Reusable, Dockerized Snakemake workflow that calls clonal haematopoiesis (CH)
-variants from blood exome sequencing without a matched normal, and classifies
-each sample as CHIP+ or CHIP-. It replaces ad hoc bash scripts for mapping,
+variants from blood exome or genome sequencing (FASTQ, BAM or CRAM) without a
+matched normal, and classifies each sample as CHIP+ or CHIP-. It replaces ad hoc bash scripts for mapping,
 panel of normals, CH calling and QC with one reusable, versioned workflow.
 
 Requirements set at design time:
@@ -90,12 +90,13 @@ Main flags: `--cores`, `--mem-gb` (hard container limits), `--batch-size`,
 - Failed samples do not stop the run; they are listed in `logs/batches/failed_<time>.tsv`
 - Every rule writes a log (`logs/<rule>/`), including the error that stopped it, and a runtime and memory benchmark (`benchmarks/<rule>/`)
 
-Example used in production (one sample per batch, 96 GB):
+Example used in production (one sample per batch, 96 GB), with a resources
+folder built by `hemaclone.sh resources` (default file names):
 
 ```bash
 bash hemaclone.sh run --cores 32 --mem-gb 96 --batch-size 1 \
-    --resources-dir /path/to/gatk_resources --tmpdir /path/to/tmp \
-    --set reference.gene_panel_bed=chip_genes.exome_pad50.bed \
+    --resources-dir /path/to/hg38_resources --tmpdir /path/to/tmp \
+    --set ch_filter.min_dp=100 --set ch_filter.min_vaf=0.02 \
     --set job_sizes.bwa_map.mem_mb=32000
 ```
 
@@ -119,10 +120,14 @@ bash hemaclone.sh run --cores 32 --mem-gb 96 --batch-size 1 \
 
 ### Calling intervals
 
-Two BED versions, chosen at launch, with no intervals logic hard-coded in the workflow:
-
-- `chip_genes.exome_pad50.bed`: gene bodies of the CH panel intersected with the exome targets, padded by 50 bp (WES)
-- `chip_genes.bed`: gene bodies (for a future WGS use)
+Mutect2 calls only inside `reference.gene_panel_bed`. The resources command
+builds it as `chip_genes.bed`: the gene spans of `resources.panel_genes` (81
+genes) from the Funcotator GENCODE annotation, intersected with the kit
+targets given with `--targets` and padded by `resources.panel_padding` (50 bp,
+for splice sites). Gene spans alone would make Mutect2 scan introns without
+reads and make panel depth averages meaningless on exome data. Any other BED
+can be given with `--set reference.gene_panel_bed=...`; changing it re-runs
+Mutect2 and the steps after it.
 
 ## 6. CHIP classification criteria
 
@@ -244,8 +249,8 @@ renders it again.
 ## 10. Known limitations and open items
 
 - **Sensitivity is unmeasured.** Candidate benchmark: GIAB mixtures or dilutions with known low-VAF variants, sensitivity and false positives by VAF bin.
-- **min_dp vs real depth**: check that `ch_filter.min_dp` fits the achieved panel depth (CollectHsMetrics) before trusting calls near the floor.
-- **No sample identity check** (e.g. Conpair) between samples of the same individual.
+- **min_dp vs real depth**: check that `ch_filter.min_dp` fits the achieved depth (coverage section of the QC report) before trusting calls near the floor.
+- **Strand-bias and repeat-indel thresholds are defaults, not tuned**: `chip.max_sor` and the indel thresholds are to be set from the benchmark.
 - **Systematic artefacts pass the filters.** Recurrent indels in low-complexity regions of long genes (KMT2A, KMT2D, BCORL1, CREBBP, SRCAP, ZNF318) and missense calls in GC-rich genes (CEBPA, GATA2, WT1) can clear every criterion, because an external PoN does not contain artefacts specific to one lab or protocol. Signs: many calls concentrated in a few samples, the same genes and positions across unrelated individuals, VAF near the floor, frameshift and in-frame insertions. Candidate filters, discussed but not implemented:
   - indels in tandem repeats and homopolymers, and indels in general: stricter thresholds, implemented in 1.6.0 (section 6)
   - within-cohort recurrence flag for non-hotspot positions: not adopted, because each sample is classified from its own data only (section 1); recurrent positions stay a review item in the CH report
@@ -261,8 +266,8 @@ renders it again.
 
 ## 12. Version 1.6.0: scope and decisions
 
-Changes go through `release/1.6.0`, one pull request per change; `VERSION`
-becomes 1.6.0 when the release branch is merged into `main`.
+Released as 1.6.0 (`CHANGELOG.md`). Changes went through `release/1.6.0`, one
+pull request per change, merged into `main` with `VERSION` set to 1.6.0.
 
 | Area | Decision |
 |---|---|

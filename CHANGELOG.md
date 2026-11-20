@@ -5,9 +5,12 @@ change to calls or classification bumps at least MINOR; a change that leaves
 every output identical is a PATCH. The version in `VERSION`, the git tag
 `vX.Y.Z` and the Docker image tag `hemaclone:X.Y.Z` always match.
 
-## [Unreleased]
+## [1.6.0] - 2026-11-20
 
-Changes merged into `release/1.6.0`.
+Calls change: new strand-bias, indel and repeat-indel criteria, and the GATK
+hg38 reference with its ALT contig list. Re-run the resources command for an
+existing resources folder (it adds the new files), and re-run projects from
+the start to compare with 1.5.0 results.
 
 ### Added
 - CI on pull requests and pushes to `main` and release branches
