@@ -152,6 +152,48 @@ rule wgs_metrics:
         " > {log} 2>&1"
 
 
+# Sex and sample identity (somalier): allele counts at known polymorphic sites
+# per sample, read from the duplicate-marked BAM inside the sample's batch
+# (in WGS that BAM is deleted afterwards), then relatedness over the cohort.
+rule somalier_extract:
+    input:
+        bam = "bam/{sample}.markdup.bam",
+        bai = "bam/{sample}.markdup.bai",
+    output:
+        "qc/somalier/extract/{sample}.somalier",
+    params:
+        somalier = TOOLS["somalier"],
+        sites = REF["somalier_sites"],
+        ref = REF["fasta"],
+    threads: threads_of("somalier_extract")
+    resources:
+        mem_mb = mem_of("somalier_extract"),
+    log: "logs/somalier_extract/{sample}.log"
+    benchmark: "benchmarks/somalier_extract/{sample}.tsv"
+    shell:
+        # somalier names the output after the read group SM tag, which is the sample
+        "{params.somalier} extract -d qc/somalier/extract --sites {params.sites}"
+        " -f {params.ref} {input.bam} > {log} 2>&1"
+
+
+rule somalier_relate:
+    input:
+        expand("qc/somalier/extract/{sample}.somalier", sample=SAMPLES),
+    output:
+        samples = "qc/somalier/relate.samples.tsv",
+        pairs = "qc/somalier/relate.pairs.tsv",
+        html = "qc/somalier/relate.html",
+    params:
+        somalier = TOOLS["somalier"],
+    threads: threads_of("somalier_relate")
+    resources:
+        mem_mb = mem_of("somalier_relate"),
+    log: "logs/somalier_relate/somalier_relate.log"
+    benchmark: "benchmarks/somalier_relate/somalier_relate.tsv"
+    shell:
+        "{params.somalier} relate --output-prefix qc/somalier/relate {input} > {log} 2>&1"
+
+
 rule multiqc:
     input:
         fastqc = expand("qc/fastqc/{fq}_fastqc.zip", fq=FASTQ_BY_BASE),
@@ -187,11 +229,15 @@ rule qc_flags:
         coverage = expand("qc/bam/{sample}.{metrics}.txt", sample=SAMPLES, metrics=COVERAGE_METRICS),
         insert_size = expand("qc/bam/{sample}.insert_size_metrics.txt", sample=SAMPLES),
         dup = expand("qc/markdup/{sample}.dup_metrics.txt", sample=SAMPLES),
+        relate_samples = "qc/somalier/relate.samples.tsv",
+        relate_pairs = "qc/somalier/relate.pairs.tsv",
     output:
         "qc/qc_flags.tsv",
     params:
         samples = SAMPLES,
         data_type = DATA_TYPE,
+        identity = {key: config["qc"][key] for key in
+                    ["min_relatedness_flag", "min_relatedness_list", "sex_y_ratio_male", "expected_sex"]},
         thresholds = config["qc"]["thresholds_wgs"] if WGS else config["qc"]["thresholds"],
     threads: threads_of("qc_flags")
     resources:

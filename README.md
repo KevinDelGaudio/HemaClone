@@ -112,6 +112,20 @@ Only read pairs are re-aligned: unpaired reads are dropped, and reads whose
 mate is missing are counted in `logs/bam_remap/` as singletons. FastQC runs on
 FASTQ input only.
 
+### Sex and sample identity
+
+somalier compares every pair of samples at known polymorphic sites:
+`POSSIBLE_DUPLICATE` in `qc/qc_flags.tsv` marks pairs with relatedness of at
+least 0.8 (the same individual, or a sample swap); `related_samples` lists
+pairs from 0.4 (relatives). The X and Y depth ratios are reported for every
+sample. Once male and female samples separate on a first run, set the Y ratio
+cut-off and, optionally, a table of expected sex (sample, male/female, kept
+with your sample lists) to flag `SEX_MISMATCH`:
+
+```bash
+    --set qc.sex_y_ratio_male=0.2 --set qc.expected_sex=/path/to/expected_sex.tsv
+```
+
 ### Whole-genome data
 
 Add `--data-type wgs` and choose the CH depth and VAF floors for your depth;
@@ -152,7 +166,8 @@ not needed.
 | `chip/chip_calls.oncoplot.maf` | the same, plus a placeholder row per CHIP- sample for oncoplots |
 | `chip/chip_candidates.tsv` | every candidate call with one column per criterion |
 | `chip/chip_filter_counts.tsv` | per criterion: calls failing it, and calls failing only it |
-| `qc/multiqc/chip_qc.html`, `qc/qc_flags.tsv` | QC report and per-sample flags |
+| `qc/multiqc/chip_qc.html`, `qc/qc_flags.tsv` | QC report and per-sample flags, sex and identity check included |
+| `qc/somalier/relate.html` | somalier relatedness and sex report |
 
 ## Report
 

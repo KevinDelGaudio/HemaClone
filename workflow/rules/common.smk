@@ -189,6 +189,7 @@ required_files = {
     "gene panel BED": REF["gene_panel_bed"],
     "repeats BED": REF["repeats_bed"],
     "repeats BED index": f"{REF['repeats_bed']}.tbi",
+    "somalier sites": REF["somalier_sites"],
 }
 for key in ["gnomad", "common_variants", "dbsnp", "mills"]:
     required_files[key] = REF[key]
@@ -283,6 +284,17 @@ if QC_ENV:
 else:
     needed_tools += ["fastqc", "multiqc"]
 fail_if([t for t in needed_tools if shutil.which(t) is None], "Tools not found on PATH")
+fail_if([TOOLS["somalier"]] if shutil.which(TOOLS["somalier"]) is None else [],
+        "somalier not found (tools.somalier)")
+
+# Sex and identity check settings
+QC = config["qc"]
+if QC["expected_sex"]:
+    if QC["sex_y_ratio_male"] is None:
+        raise PreflightError("qc.expected_sex needs qc.sex_y_ratio_male, the Y/autosome depth "
+                             "ratio above which a sample is called male")
+    fail_if([QC["expected_sex"]] if not os.path.isfile(QC["expected_sex"]) else [],
+            "Expected-sex table not found")
 
 if QC_ENV:
     env_listing = subprocess.run(["conda", "env", "list"], capture_output=True, text=True).stdout
@@ -380,6 +392,7 @@ def sample_outputs():
     for name in ["stats", "alignment_summary_metrics", "insert_size_metrics", COVERAGE_METRICS]:
         outputs += expand("qc/bam/{sample}.{name}.txt", sample=SAMPLES, name=name)
     outputs += expand("qc/markdup/{sample}.dup_metrics.txt", sample=SAMPLES)
+    outputs += expand("qc/somalier/extract/{sample}.somalier", sample=SAMPLES)
     outputs += expand("chip/samples/{sample}.candidates.tsv", sample=SAMPLES)
     outputs += expand("chip/samples/{sample}.status.tsv", sample=SAMPLES)
     return outputs

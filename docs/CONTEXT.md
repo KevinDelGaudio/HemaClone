@@ -110,7 +110,7 @@ bash hemaclone.sh run --cores 32 --mem-gb 96 --batch-size 1 \
 9. **CH genotype filters**: VariantFiltration `DP < min_dp` (LowDP) and `AF < min_vaf` (LowVAF), then SelectVariants `--exclude-filtered --set-filtered-gt-to-nocall --exclude-non-variants`.
 10. **gnomAD annotation**: bcftools `annotate -c INFO/GNOMAD_AF:=INFO/AF` from the local AF-only gnomAD, allele-matched. Funcotator's own gnomAD sources are not used (they ship as unextracted tarballs).
 11. **Funcotator** to MAF (hg38) for two tiers: `_all` (PASS) and `_ch_final` (after the CH filters).
-12. **QC**: FastQC, samtools stats, CollectAlignmentSummaryMetrics, CollectInsertSizeMetrics, CollectHsMetrics (WES; coverage cap 1000, MAPQ and BQ at least 20) or CollectWgsMetrics over `reference.wgs_intervals` (WGS; coverage cap 250), MultiQC, `qc/qc_flags.tsv`.
+12. **QC**: FastQC, samtools stats, CollectAlignmentSummaryMetrics, CollectInsertSizeMetrics, CollectHsMetrics (WES; coverage cap 1000, MAPQ and BQ at least 20) or CollectWgsMetrics over `reference.wgs_intervals` (WGS; coverage cap 250), somalier sex and identity check (`somalier extract` per sample from the duplicate-marked BAM, inside its batch; `somalier relate` over the cohort, `qc/somalier/relate.*`), MultiQC, `qc/qc_flags.tsv`.
 13. **CHIP classification**: `chip_sample.py` per sample, `chip_cohort.py` for the cohort tables.
 
 ### Calling intervals
@@ -164,6 +164,8 @@ U2AF1 S34/Q157, IDH1 R132, IDH2 R140/R172, GNB1 K57, KRAS and NRAS G12/G13/Q61.
 | `qc/multiqc/chip_qc.html`, `qc/qc_flags.tsv` | QC report and per-sample flags |
 
 WGS QC flags (`qc.thresholds_wgs`, columns `mean_coverage`, `pct_20x`, `pct_exc_dupe`, `pct_exc_mapq`, `median_insert_size`, `pct_dup_markdup`): mean coverage at least 25, at least 80% of the calling regions at 20x, duplication at most 30%.
+
+Sex and identity columns (WES and WGS): `x_depth_ratio`, `y_depth_ratio` (mean depth at the somalier sites on X and Y over the autosomal mean), `inferred_sex` (male when `y_depth_ratio` is at least `qc.sex_y_ratio_male`; `NA` while that is null), `related_samples` (other samples with relatedness at least `qc.min_relatedness_list`, 0.4). Flags: `POSSIBLE_DUPLICATE` (relatedness at least `qc.min_relatedness_flag`, 0.8: the same individual or a sample swap) and `SEX_MISMATCH` (inferred sex differs from `qc.expected_sex`, an optional run-time table). somalier 0.3.1 runs from its own environment in the image (`workflow/docker/somalier.yaml`), because its htslib pin differs from that of samtools and bcftools.
 
 WES QC flag thresholds: mean coverage at least 30, at least 80% of target at 20x,
 at least 40% selected bases, duplication at most 50%, dropout at most 10.
@@ -236,5 +238,5 @@ becomes 1.6.0 when the release branch is merged into `main`.
 | Gene-specific variant allow-list | deferred to a later version |
 | WGS | `data_type: wes` or `wgs` (flag `--data-type`) switches BQSR intervals and the QC metrics; the recalibrated BAM covers only the panel and the contamination sites; the duplicate-marked BAM is deleted after QC and BQSR; a WGS run must set `ch_filter.min_dp` and `ch_filter.min_vaf` at launch |
 | Input | BAM or CRAM accepted and re-aligned (reads extracted with original qualities, mapped like FASTQ); sample name from the file name; FastQC on FASTQ input only |
-| Sample QC | sex and sample identity check with somalier |
+| Sample QC | sex and sample identity check with somalier 0.3.1, in its own environment in the image; duplicate flag at relatedness 0.8; sex inferred only once `qc.sex_y_ratio_male` is set from a first cohort |
 | Benchmark | after 1.6.0, against the tools in `docs/COMPARATORS.md` |

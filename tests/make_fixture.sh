@@ -52,7 +52,8 @@ for name in \
     Mills_and_1000G_gold_standard.indels.hg38.vcf.gz Mills_and_1000G_gold_standard.indels.hg38.vcf.gz.tbi \
     1000g_pon.hg38.vcf.gz 1000g_pon.hg38.vcf.gz.tbi \
     GRCh38_AllTandemRepeatsandHomopolymers_slop5.bed.gz \
-    GRCh38_AllTandemRepeatsandHomopolymers_slop5.bed.gz.tbi
+    GRCh38_AllTandemRepeatsandHomopolymers_slop5.bed.gz.tbi \
+    sites.hg38.vcf.gz
 do
     : > "${RESOURCES_DIR}/${name}"
 done

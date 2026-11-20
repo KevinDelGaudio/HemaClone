@@ -15,10 +15,11 @@ with the same size and checksum:
   2. GATK somatic resources: gnomAD allele frequencies, common sites, panel
      of normals
   3. GIAB tandem repeats and homopolymers BED, bgzipped and tabix-indexed
-  4. bwa-mem2 index of the FASTA
-  5. Funcotator somatic data sources
-  6. Exome intervals: the kit BED given with --targets, as an interval list
-  7. CH gene panel BED: gene spans from the Funcotator GENCODE annotation,
+  4. somalier sites (sex and sample identity check)
+  5. bwa-mem2 index of the FASTA
+  6. Funcotator somatic data sources
+  7. Exome intervals: the kit BED given with --targets, as an interval list
+  8. CH gene panel BED: gene spans from the Funcotator GENCODE annotation,
      intersected with the kit targets and padded
 
 Downloads resume after an interruption and are checked against the size and,
@@ -537,23 +538,28 @@ def main(argv):
     print(f"  bundle       : {resources['bundle_url']}")
     print(f"  somatic      : {resources['somatic_url']}")
     print(f"  repeats      : {resources['repeats_url']}")
+    print(f"  somalier     : {resources['somalier_sites_url']}")
     print(f"  tmpdir       : {tmpdir}")
 
     rows = read_manifest(dest)
 
-    step("1/7 GATK reference bundle")
+    step("1/8 GATK reference bundle")
     fetch_files(resources["bundle_url"], BUNDLE_FILES, dest, rows)
-    step("2/7 GATK somatic resources")
+    step("2/8 GATK somatic resources")
     fetch_files(resources["somatic_url"], SOMATIC_FILES, dest, rows)
-    step("3/7 GIAB tandem repeats and homopolymers")
+    step("3/8 GIAB tandem repeats and homopolymers")
     get_repeats_bed(resources["repeats_url"], dest, rows, config["reference"]["repeats_bed"], logs)
-    step("4/7 bwa-mem2 index (slow, and needs much memory for hg38)")
+    step("4/8 somalier sites")
+    sites_url = resources["somalier_sites_url"]
+    fetch_files(os.path.dirname(sites_url),
+                [(os.path.basename(sites_url), config["reference"]["somalier_sites"])], dest, rows)
+    step("5/8 bwa-mem2 index (slow, and needs much memory for hg38)")
     build_bwa_index(dest, rows, logs)
-    step("5/7 Funcotator somatic data sources")
+    step("6/8 Funcotator somatic data sources")
     get_funcotator(dest, rows, config["reference"]["funcotator_ds"], tmpdir, logs)
-    step("6/7 Exome intervals")
+    step("7/8 Exome intervals")
     kit = build_exome_intervals(dest, rows, config, targets, logs)
-    step("7/7 CH gene panel")
+    step("8/8 CH gene panel")
     build_panel(dest, rows, config, kit, logs)
 
     defaults = {"fasta": FASTA, "dbsnp": "Homo_sapiens_assembly38.dbsnp138.vcf",

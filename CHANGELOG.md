@@ -68,6 +68,15 @@ Changes merged into `release/1.6.0`.
 - The memory-budget preflight check covers only the jobs a run can use (the
   BAM/CRAM rules with BAM/CRAM units, the coverage metrics of the data type),
   so an unused job's size never stops a run.
+- Sex and sample identity check with somalier 0.3.1, in its own environment
+  in the image (`workflow/docker/somalier.yaml`; the main tools are
+  unchanged): `somalier_extract` per sample inside its batch,
+  `somalier_relate` over the cohort (`qc/somalier/`). `qc_flags.tsv` gains
+  `x_depth_ratio`, `y_depth_ratio`, `inferred_sex`, `related_samples` and the
+  flags `POSSIBLE_DUPLICATE` (relatedness >= `qc.min_relatedness_flag`, 0.8)
+  and `SEX_MISMATCH` (with `qc.sex_y_ratio_male` and `qc.expected_sex`). The
+  resources command downloads the somalier hg38 sites. A sample counts as
+  finished once its somalier extract exists.
 - `tests/chip_sample_test.py`: classification of a synthetic sample, one call
   per case, run in CI inside the image.
 - CI builds a resources folder from a tiny bundle with the real tools
