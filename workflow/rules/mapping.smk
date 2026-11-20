@@ -69,7 +69,7 @@ rule bam_check:
 
 # Re-alignment of a BAM/CRAM unit, streamed: reads grouped by name, written
 # as interleaved pairs (original qualities from OQ when present; secondary,
-# supplementary and unpaired reads dropped, counts in the log), mapped like
+# supplementary and unpaired reads dropped, mate-less reads counted in the log), mapped like
 # FASTQ input. A file without read pairs fails.
 rule bam_remap:
     input:

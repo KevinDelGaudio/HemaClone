@@ -108,8 +108,9 @@ bash hemaclone.sh run \
     --set input.cram_reference=/path/to/cram_reference.fasta
 ```
 
-Only read pairs are re-aligned (unpaired reads are dropped and counted in
-`logs/bam_remap/`). FastQC runs on FASTQ input only.
+Only read pairs are re-aligned: unpaired reads are dropped, and reads whose
+mate is missing are counted in `logs/bam_remap/` as singletons. FastQC runs on
+FASTQ input only.
 
 ### Whole-genome data
 
